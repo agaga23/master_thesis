@@ -151,6 +151,7 @@ public:
 
     int     declared_n_vars;            // Number of variables declared in file header (-1 = not specified).
     int     declared_n_constrs;         // Number of constraints declared in file header (-1 = not specified).
+    Int     hard_bound;
     int     pb_n_vars;                  // Actual number of variables (before clausification).
     int     pb_n_constrs;               // Actual number of constraints (before clausification).
 
@@ -166,7 +167,7 @@ public:
     // Problem specification:
     //
     int     getVar         (cchar* name);
-    void    allocConstrs   (int n_vars, int n_constrs);
+    void    allocConstrs   (int n_vars, int n_constrs, Int bound);
     void    addGoal        (const vec<Lit>& ps, const vec<Int>& Cs);
     bool    addConstr      (const vec<Lit>& ps, const vec<Int>& Cs, Int rhs, int ineq, Lit& lit);
 

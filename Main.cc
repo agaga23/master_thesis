@@ -87,8 +87,12 @@ bool     opt_maxsat_prepr  = true;
 bool     opt_use_maxpre    = false;
 bool     opt_reuse_sorters = true;
 uint64_t opt_unsat_conflicts = 5000000;
+bool     opt_only_hards    = false;
+uint64_t opt_dist          = 0;
+uint64_t opt_satlike       = 0;
+
 #ifdef MAXPRE
-char     opt_maxpre_str[80]= "[bu]#[buvsrgc]";
+char     opt_maxpre_str[80]= "[u]#[uvsrgc]";
 int      opt_maxpre_time   = 0;
 int      opt_maxpre_skip   = 0;
 maxPreprocessor::PreprocessorInterface *maxpre_ptr = NULL;
@@ -146,6 +150,9 @@ cchar* doc =
     "  -seq          Sequential search for the optimum value of goal.\n"
     "  -bin          Binary search for the optimum value of goal. (default)\n"
     "  -alt          Alternating search for the optimum value of goal. (a mix of the above)\n"
+    "  -oh -hards    Run 1 SAT query only on hard clauses to find the very first solution.\n"
+    "  -dist=<num>   Run DistUp algorithm for the first <num> s.\n"
+    "  -satlike=<num>Run SATLike algorithm for the first <num> s (or after dist).\n"
 
     "\n"
     "Input options:\n"
@@ -242,6 +249,9 @@ void parseOptions(int argc, char** argv)
             else if (oneof(arg, "bm,bin-model" ))   opt_model_out = opt_bin_model_out = true;
             else if (oneof(arg, "no-msu" ))         opt_maxsat_msu   = false;
             else if (oneof(arg, "no-sat" ))         opt_satisfiable_out   = false;
+            else if (oneof(arg, "oh,hards")) opt_only_hards = true;
+            else if (strncmp(arg, "-dist=",  6) == 0) opt_dist = atoi(arg+6);
+            else if (strncmp(arg, "-satlike=",  9) == 0) opt_satlike = atoi(arg+9);
 
             //(make nicer later)
             else if (strncmp(arg, "-bdd-thres=" , 11) == 0) opt_bdd_thres  = atof(arg+11);
@@ -323,6 +333,10 @@ void parseOptions(int argc, char** argv)
 #ifdef USE_SCIP
     if (opt_command != cmd_Minimize || opt_output_top > 0) opt_use_scip_slvr = false;
 #endif
+    if (opt_use_maxpre and (opt_dist > 0 or opt_satlike > 0)){
+        fprintf(stderr, "ERROR! MaxPre is not available together with local searches.\n");
+        exit(1);
+    }
     if (args.size() >= 1)
         opt_input = args[0];
     if (args.size() == 2)
@@ -373,15 +387,21 @@ void reportf(const char* format, ...)
 
 MsSolver*   pb_solver = NULL;   // Made global so that the SIGTERM handler can output best solution found.
 static bool resultsPrinted = false;
-
+static bool output_started = false;
 void outputResult(const PbSolver& S, bool optimum)
 {
+    if (!output_started) output_started = true;
+    else return;
+
+    // if (S.best_goalvalue != Int_MAX)
+    //     printf("o %s\n", toString(S.best_goalvalue * S.goal_gcd)), fflush(stdout);
+
 #ifdef USE_SCIP
     std::lock_guard<std::mutex> lck(stdout_mtx);
 #endif
     if (!opt_satlive || resultsPrinted) return;
 
-    if (opt_model_out && S.best_goalvalue != Int_MAX){
+    if (opt_model_out && S.best_model.size() != 0 ){
 #ifdef MAXPRE
         if (opt_use_maxpre) {
             std::vector<int> trueLiterals, model;
@@ -453,6 +473,9 @@ static void handlerOutputResult(const PbSolver& S, bool optimum = true)
     constexpr int BUF_SIZE = 50000;
     static char buf[BUF_SIZE];
     static int lst = 0;
+    // if (S.best_goalvalue != Int_MAX)
+    //     printf("o %s\n", toString(S.best_goalvalue)), fflush(stdout);
+
     if (!opt_satlive || resultsPrinted || opt_output_top >= 0) return;
     if (opt_model_out && S.best_goalvalue != Int_MAX){
 #ifdef MAXPRE
@@ -555,7 +578,6 @@ static void SIGINT_handler(int /*signum*/) {
     fflush(stdout);
     std::_Exit(0); }
 
-
 static void SIGTERM_handler(int signum) {
     if (opt_verbosity >= 1) {
         reportf("\n");
@@ -564,7 +586,10 @@ static void SIGTERM_handler(int signum) {
         pb_solver->printStats();
         reportf("_______________________________________________________________________________\n");
     }
-    handlerOutputResult(*pb_solver, false);
+    if (!output_started) {
+        output_started = true;
+        handlerOutputResult(*pb_solver, false);
+    }    
     //SatELite::deleteTmpFiles();
     //fflush(stdout);
     std::_Exit(0);
@@ -644,7 +669,7 @@ int main(int argc, char** argv)
         if (opt_verbosity >= 1) reportf("Parsing MaxSAT file...\n");
         parse_WCNF_file(opt_input, *pb_solver);
         if (opt_convert == ct_Undef) opt_convert = ct_Sorters;
-        if (opt_maxsat_msu) {
+        else if (opt_maxsat_msu) {
             if (opt_seq_thres < 0) opt_seq_thres = 4;
             pb_solver->maxsat_solve(convert(opt_command));
         } else {

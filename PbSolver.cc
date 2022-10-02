@@ -51,10 +51,11 @@ int PbSolver::getVar(cchar* name)
 }
 
 
-void PbSolver::allocConstrs(int n_vars, int n_constrs)
+void PbSolver::allocConstrs(int n_vars, int n_constrs, Int bound)
 {
     declared_n_vars    = n_vars;
     declared_n_constrs = n_constrs;
+    hard_bound = bound;
 }
 
 

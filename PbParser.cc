@@ -198,7 +198,7 @@ void parseSize(B& in, S& solver)
     if (!skipText(in, "#constraint=")) goto Abort;
     n_constrs = toint(parseInt(in));
 
-    solver.allocConstrs(n_vars, n_constrs);
+    solver.allocConstrs(n_vars, n_constrs, -1);
 
   Abort:
     skipLine(in);
@@ -306,12 +306,15 @@ static void parse_p_line(B& in, S& solver, bool& wcnf_format, Int& hard_bound)
         hard_bound = parseInt(in);
 
     if (!opt_use_maxpre) {
-        solver.allocConstrs(n_vars, n_constrs);
+        solver.allocConstrs(n_vars, n_constrs, hard_bound);
         for (int i = 1; i <= n_vars; i++) {
             sprintf(&tmp[0], "%d", i);
             solver.getVar(tmp);
         }
-    }
+    }    
+    if(opt_dist + opt_satlike > 0)
+        solver.mentioned_lits.growTo(n_vars*2, -1);
+
   Abort:
     skipLine(in);
     skipComments(in);
@@ -348,8 +351,8 @@ static bool parse_wcnfs(B& in, S& solver, bool wcnf_format, Int hard_bound)
     std::vector<uint64_t>  weights;
     Int weight_sum(0);
 #endif
-
-    tmp.clear(); tmp.growTo(15,0);
+    vec<int> orig; 
+    tmp.clear(); tmp.growTo(15,0);    
     while (*in != EOF){
         skipWhitespace(in);
         if (*in == 'h') ++in, weight = hard_bound;
@@ -381,26 +384,37 @@ static bool parse_wcnfs(B& in, S& solver, bool wcnf_format, Int hard_bound)
             weights.push_back(weight >= hard_bound ? 0 : tolong(weight));
             if (weight < hard_bound) {
                 solver.storeSoftClause(ps, tolong(weight));
+                if(opt_dist + opt_satlike > 0) solver.storeNonDuplicatedClause(ps, tolong(weight));
                 weight_sum += weight;
-            }
+            } else if(opt_dist + opt_satlike > 0) solver.storeNonDuplicatedClause(ps, -1);
         } else 
 #endif
         if (weight <= 0) { ps.clear(); continue; }
         else if (weight >= hard_bound) {
-            if (!solver.addClause(ps)) return false;
-        } else {
+            if (!solver.addClause(ps)) {
+                return false;
+            }
+            if(opt_dist + opt_satlike > 0) solver.storeNonDuplicatedClause(ps, -1);
+        } else {        
             if (ps.size() == 1) {
                 if (!opt_maxsat_msu) gps.push(~ps.last()), gCs.push(weight);
             } else {
                 ps.push(lit_Undef);
                 if (!opt_maxsat_msu) gps.push(ps.last()), gCs.push(weight);
             }
-#ifdef BIG_WEIGHTS
-            solver.storeSoftClause(ps, weight);
-#else
-            solver.storeSoftClause(ps, tolong(weight));
-#endif
+            #ifdef BIG_WEIGHTS
+                        solver.storeSoftClause(ps, weight);
+                        if(opt_dist + opt_satlike > 0) solver.storeNonDuplicatedClause(ps, weight);
+            #else
+                        solver.storeSoftClause(ps, tolong(weight));
+                        if(opt_dist + opt_satlike > 0) solver.storeNonDuplicatedClause(ps, tolong(weight));
+            #endif
         }
+// #ifdef BIG_WEIGHTS
+//                 solver.storeOrigClause(ps, weight);
+// #else
+//                 solver.storeOrigClause(ps, tolong(weight));
+// #endif
         if (solver.declared_n_constrs < 0 && ps.size() > 0) n_constrs++;
         ps.clear();
     }
@@ -475,6 +489,7 @@ static bool parse_wcnfs(B& in, S& solver, bool wcnf_format, Int hard_bound)
         gCs.push(one);
     }
     if (!opt_maxsat_msu) solver.addGoal(gps, gCs);
+    solver.mentioned_lits.clear();
     return true;
 }
 

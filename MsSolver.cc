@@ -24,7 +24,10 @@
 #include "System.h"
 #include "Sort.h"
 #include "Debug.h"
-
+#include <cstdlib>
+#include <queue>
+#include <vector>
+#include <set>
 #ifdef USE_SCIP
 #include <atomic>
     extern std::atomic<bool> SCIP_found_opt; 
@@ -97,16 +100,14 @@ bool satisfied_soft_cls(Minisat::vec<Lit> *cls, vec<bool>& model)
     return false;
 }
 
-
-Int evalGoal(const vec<Pair<weight_t, Minisat::vec<Lit>* > >& soft_cls, vec<bool>& model, 
-        Minisat::vec<Lit>&soft_unsat)
+Int evalGoal(const vec<Pair<weight_t, Minisat::vec<Lit>* > >& soft_cls, 
+        vec<bool>& model, Minisat::vec<Lit>&soft_unsat)
 {
     Int sum = 0;
     bool sat = false;
     soft_unsat.clear();
     for (int i = 0; i < soft_cls.size(); i++) {
         Lit p = soft_cls[i].snd->last(); if (soft_cls[i].snd->size() == 1) p = ~p;
-        assert(var(p) < model.size());
         if ((( sign(p) && !model[var(p)]) || (!sign(p) &&  model[var(p)])) 
             && !(sat = satisfied_soft_cls(soft_cls[i].snd, model))) {
             if (opt_output_top > 0) soft_unsat.push(~p);
@@ -224,6 +225,8 @@ static void opt_stratification(vec<weight_t>& sorted_assump_Cs, vec<Pair<Int, bo
 }*/
 
 template <class T> struct LT {bool operator()(T x, T y) { return x.snd->last() < y.snd->last(); }};
+template <class T> struct wLT {bool operator()(T x, T y) { return x.fst < y.fst; }};
+template <class T> struct lLT {bool operator()(T x, T y) { return x < y; }};
 
 static weight_t do_stratification(SimpSolver& S, vec<weight_t>& sorted_assump_Cs, vec<Pair<weight_t,
         Minisat::vec<Lit>* > >& soft_cls, int& top_for_strat, Minisat::vec<Lit>& assump_ps, vec<Int>& assump_Cs)
@@ -325,8 +328,906 @@ void MsSolver::optimize_last_constraint(vec<Linear*>& constrs, Minisat::vec<Lit>
 
 static inline int log2(int n) { int i=0; while (n>>=1) i++; return i; }
 
+///////////////////////////////////////////////////////////////////////////
+// For every literal have an ordered vector of clauses where it appears.
+void MsSolver::set_lits_in_clauses(){
+    if (hards != -1) return;
+    Sort::sort(&all_cls[0], all_cls.size(), wLT<Pair<weight_t, Minisat::vec<Lit>*> >());
+
+    int A = all_cls.size();
+    int H = A;
+    for(int i = 0; i < A; i ++){
+        if(all_cls[i].fst != -1){
+            H = i;
+            break;
+        }
+    }
+    hards = H;
+
+    lits_in_clauses.growTo(declared_n_vars * 2);
+    for(int i = 0; i < declared_n_vars * 2; i ++)
+        lits_in_clauses[i] = new vec<int>();
+
+    for(int i = 0; i < A; i ++){
+        bool is_soft = (i >= H);
+        int max_v = max(1, all_cls[i].snd->size() - is_soft);  
+
+        for(int j = 0; j < max_v; j ++){
+            int i_lit = toInt((*all_cls[i].snd)[j]);
+            lits_in_clauses[i_lit]->push(i);
+        }
+    }    
+}
+bool MsSolver::first_sat_based_model(vec<bool>& model, int& H){    
+    for (Var x = 0; x < model.size(); x ++)
+        sat_solver.setFrozen(x, true);
+
+    lbool status = sat_solver.solveLimited(Minisat::vec<Lit>());
+    if (status != l_True) return 0;
+
+    for (Var x = 0; x < declared_n_vars; x++)
+        model[x] = (sat_solver.modelValue(x) == l_True);
+    return 1;
+}
+bool polarity(Lit p){
+    return !sign(p);
+}
+void MsSolver::value_hard_clause(vec<int>& unvalued_lits, vec<bool>& model, vec<bool>& set_vars, int& c){
+    unvalued_lits[c] = 0;
+    int H = unvalued_lits.size();
+
+    for(int j = 0; j < all_cls[c].snd->size(); j ++){
+        Lit p = (*all_cls[c].snd)[j];
+        
+        if(set_vars[var(p)]) continue;
+
+        set_vars[var(p)] = true;
+        model[var(p)] = !sign(p); 
+            
+        for(int i = 0; i < lits_in_clauses[toInt(p)]->size(); i ++){
+            int k = (*lits_in_clauses[toInt(p)])[i];
+            if (k >= H) break;
+            unvalued_lits[k] = 0;
+        }
+        for(int i = 0; i < lits_in_clauses[toInt(~p)]->size(); i ++){
+            int k = (*lits_in_clauses[toInt(~p)])[i];
+            if (k >= H) break;
+            if(unvalued_lits[k] > 0) unvalued_lits[k] = unvalued_lits[k] - 1;
+            if(unvalued_lits[k] == 1) value_hard_clause(unvalued_lits, model, set_vars, k);
+        }
+        return;
+    }
+    reportf("Error! Hard clause unsatisfied! All literals are already valued.\n");
+    return;
+}
+// Run unit propagation on hard clauses and then set random values.
+void MsSolver::run_up(vec<bool>& model, const int& H){
+    vec<int> unvalued_lits;
+    unvalued_lits.growTo(H);
+
+    int V = model.size();
+    vec<bool> set_vars;
+    set_vars.growTo(V, 0);
+
+    for(int c = 0; c < H; c ++) 
+        unvalued_lits[c] = all_cls[c].snd->size();
+    
+    for(int c = 0; c < H; c ++) 
+        if(unvalued_lits[c] == 1)
+            value_hard_clause(unvalued_lits, model, set_vars, c);
+
+    for(int x = 0; x < V; x ++){
+        if(!set_vars[x]) model[x] = rand() % 2;
+    }
+}
+// Run distUp algorithm for the given <num> second.
+// From Tailoring Local Search for Partial MaxSAT, 2014
+bool MsSolver::run_dist(const int& time_limit){
+    int A = all_cls.size(), V = declared_n_vars;
+    int pp = 10;
+    if(V > 2500) pp = 1;    
+
+    if(hards == -1) set_lits_in_clauses();
+    int H = hards;
+
+    Metrics m(V, A, H);
+    m.initialize_metrics(0);
+
+    if (!opt_only_hards or !first_sat_based_model(m.model, H)){
+        run_up(m.model, H);
+    }
+    for(int i = 0; i < A; i ++){
+        int w = all_cls[i].fst;
+        int sat = 0;
+        bool s = (i >= H);
+        int maxi = max(1, all_cls[i].snd->size() - s);           
+        for(int j = 0; j < maxi; j ++){
+            Lit p = (*all_cls[i].snd)[j];
+            if (m.model[var(p)] == polarity(p)) {
+                sat ++;
+                m.last_sat[i] = var(p);
+            }
+        }
+        m.sat_cnt[i] = sat;
+        if (!sat) {        
+            m.add_unsat(i, w);
+            for(int j = 0; j < maxi; j ++){
+                Var q = var((*all_cls[i].snd)[j]);   
+                m.update_score(s, q, abs(w));
+            }
+        } else if (sat == 1) m.update_score(s, m.last_sat[i], -abs(w));
+    }
+    for(Var x = 0; x < V; x ++){
+        if(m.hscore[x] > 0) 
+            increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, x);
+        else if(m.hscore[x] == 0 and m.sscore[x] > 0)
+            increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, x);
+    }
+
+    bool found_solution = false;
+    extern time_t wall_clock_time;
+
+    while(difftime(time(NULL), wall_clock_time) < time_limit){
+        if(m.is_the_best()) {
+            best_goalvalue = m.model_scost;
+            char* tmp = toString(m.model_scost);    
+            printf("o %s\n", tmp), fflush(stdout);            
+
+            m.model.copyTo(best_model);
+            found_solution = true;
+        }
+
+        Var x = -1;
+        if(m.cnt_hplus_scores > 0){
+            int r = rand() % m.cnt_hplus_scores;
+            x = m.hplus_scores[r];
+        } else if (m.cnt_hzero_scores > 0){
+            x = m.hzero_scores[0];
+            for(int i = 1; i < m.cnt_hzero_scores; i ++)
+                if(m.sscore[m.hzero_scores[i]] > m.sscore[x]) x = m.hzero_scores[i];
+        } 
+        if(x == -1){
+            // update weights
+            if (rand() % 10000 < pp) {
+                for(int i = 0; i < m.cnt_sat_hard_bigs; i ++){
+                    int cl = m.sat_hard_bigs[i];
+                    all_cls[cl].fst ++;         
+
+                    if(m.sat_cnt[cl] == 1){
+                        Var q = m.last_sat[cl];  
+
+                        if(m.hscore[q] == 0 and m.sscore[q] > 0) 
+                            decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        if(m.hscore[q] <= 0 and m.hscore[q] + 1 > 0)
+                            increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                        else if(m.hscore[q] + 1 == 0 and m.sscore[q] > 0)
+                            increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        m.hscore[q] += 1;
+                    }
+                    if(all_cls[cl].fst == -1)
+                        decreasePointerList(m.sat_hard_bigs, m.sat_hard_bigs_idx, m.cnt_sat_hard_bigs, cl);                    
+                }
+            } else {
+                for(int i = 0; i < m.cnt_unsat_hards; i ++){
+                    int cl = m.unsat_hards[i];
+                    // weights of unsat hards are increased -> hscore of q should be increased as well
+                    all_cls[cl].fst --;       
+                    m.model_hcost += 1;
+
+                    for(int j = 0; j < all_cls[cl].snd->size(); j ++){
+                        Var q = var((*all_cls[cl].snd)[j]);
+                        if(m.hscore[q] == 0 and m.sscore[q] > 0) 
+                            decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        if(m.hscore[q] <= 0 and m.hscore[q] + 1 > 0)
+                            increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                        else if(m.hscore[q] + 1 == 0 and m.sscore[q] > 0)
+                            increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        m.hscore[q] += 1;
+                    }
+                }                                
+            }
+            // choose variable to flip 
+            // with the priority on positive hard cost then soft cost then random
+            int idx = -1;
+            if (m.model_hcost > 0) {
+                int r = rand() % m.cnt_unsat_hards;
+                idx = m.unsat_hards[r];
+            } else if (m.model_scost > 0){
+                int r = rand() % m.cnt_unsat_softs;
+                idx = m.unsat_softs[r];                
+            }
+            x = var((*all_cls[idx].snd)[0]);
+            bool s = (idx >= H);
+            int maxi = max(1, all_cls[idx].snd->size() - s);
+
+            for(int j = 1; j < maxi; j ++){
+                Lit p = (*all_cls[idx].snd)[j];
+                if (m.sscore[var(p)] > m.sscore[x]) x = var(p);
+            }
+        }
+        Lit xp = mkLit(x, 1 - m.model[x]);       
+
+        for(int i = 0; i < lits_in_clauses[toInt(xp)]->size(); i ++){
+            int cl = (*lits_in_clauses[toInt(xp)])[i];
+            int w = all_cls[cl].fst;
+            bool s = (cl >= H);
+            int maxi = max(1, all_cls[cl].snd->size() - s);
+            if(m.sat_cnt[cl] == 2){                
+                for(int j = 0; j < maxi; j ++){
+                    Lit p = (*all_cls[cl].snd)[j];
+                    Var q = var(p);
+                    if (p != xp and m.model[q] != sign(p)) {
+                        m.last_sat[cl] = q;
+                        break;
+                    }
+                }
+                Var q = m.last_sat[cl];
+                if(!s){
+                    int hw = -w;
+                    if(m.hscore[q] == 0 and m.sscore[q] > 0)
+                        decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                    if(m.hscore[q] > 0 and m.hscore[q] - hw <= 0)
+                        decreasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                    if(m.hscore[q] - hw == 0 and m.sscore[q] > 0)
+                        increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                    m.hscore[q] -= hw;
+                } else {
+                    if(m.hscore[q] == 0 and m.sscore[q] > 0 and m.sscore[q] - w <= 0)
+                        decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                    m.sscore[q] -= w;
+                }
+            }
+            else if(m.sat_cnt[cl] == 1){
+                m.add_unsat(cl, w);
+                if(all_cls[cl].fst < -1)
+                    decreasePointerList(m.sat_hard_bigs, m.sat_hard_bigs_idx, m.cnt_sat_hard_bigs, cl);
+                for(int j = 0; j < maxi; j ++){
+                    Var q = var((*all_cls[cl].snd)[j]);
+                    if(!s){
+                        int hw = -w;
+                        if(m.hscore[q] == 0 and m.sscore[q] > 0)
+                            decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        if(m.hscore[q] <= 0 and m.hscore[q] + hw > 0)
+                            increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                        if(m.hscore[q] + hw == 0 and m.sscore[q] > 0)
+                            increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        m.hscore[q] += hw;
+                    } else {
+                        if(m.hscore[q] == 0 and m.sscore[q] <= 0 and m.sscore[q] + w > 0)
+                            increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        m.sscore[q] += w;    
+                    }
+                }
+                if(!s){
+                    int hw = -w;
+                    if(m.hscore[x] == 0 and m.sscore[x] > 0)
+                        decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, x);
+                    if(m.hscore[x] <= 0 and m.hscore[x] + hw > 0)
+                        increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, x);
+                    if(m.hscore[x] + hw == 0 and m.sscore[x] > 0)
+                        increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, x);
+                    m.hscore[x] += hw;
+                } else {
+                    if(m.hscore[x] == 0 and m.sscore[x] <= 0 and m.sscore[x] + w > 0)
+                        increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, x);
+                    m.sscore[x] += w;
+                }
+            }             
+            m.sat_cnt[cl] --;
+        }                
+        xp = ~xp;
+        for(int i = 0; i < lits_in_clauses[toInt(xp)]->size(); i ++){
+            int cl = (*lits_in_clauses[toInt(xp)])[i];            
+            int w = all_cls[cl].fst;
+            bool s = (cl >= H);
+            int maxi = max(1, all_cls[cl].snd->size() - s);
+            if(m.sat_cnt[cl] == 1){
+                Var q = m.last_sat[cl];
+                if(!s){
+                    int hw = -w;
+                    if(m.hscore[q] == 0 and m.sscore[q] > 0)
+                        decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                    if(m.hscore[q] <= 0 and m.hscore[q] + hw > 0)
+                        increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                    if(m.hscore[q] + hw == 0 and m.sscore[q] > 0)
+                        increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                    m.hscore[q] += hw;
+                }   else {
+                        if(m.hscore[q] == 0 and m.sscore[q] <= 0 and m.sscore[q] + w > 0)
+                            increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        m.sscore[q] += w;    
+                }
+            } else if(m.sat_cnt[cl] == 0){
+                m.subtract_unsat(cl, w);
+
+                if(all_cls[cl].fst < -1)
+                    increasePointerList(m.sat_hard_bigs, m.sat_hard_bigs_idx, m.cnt_sat_hard_bigs, cl);                    
+                m.last_sat[cl] = x;
+                for(int j = 0; j < maxi; j ++){
+                    Var q = var((*all_cls[cl].snd)[j]);
+                    if(!s){
+                        int hw = -w;
+                        if(m.hscore[q] == 0 and m.sscore[q] > 0)
+                            decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        if(m.hscore[q] > 0 and m.hscore[q] - hw <= 0)
+                            decreasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                        if(m.hscore[q] - hw == 0 and m.sscore[q] > 0)
+                            increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        m.hscore[q] -= hw;
+                    } else {
+                        if(m.hscore[q] == 0 and m.sscore[q] > 0 and m.sscore[q] - w <= 0)
+                            decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, q);
+                        m.sscore[q] -= w;
+                    }
+                }
+                if(!s){
+                    int hw = -w;
+                    if(m.hscore[x] == 0 and m.sscore[x] > 0)
+                        decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, x);
+                    if(m.hscore[x] > 0 and m.hscore[x] - hw <= 0)
+                        decreasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, x);
+                    if(m.hscore[x] - hw == 0 and m.sscore[x] > 0)
+                        increasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, x);
+                    m.hscore[x] -= hw;
+                } else {
+                    if(m.hscore[x] == 0 and m.sscore[x] > 0 and m.sscore[x] - w <= 0)
+                        decreasePointerList(m.hzero_scores, m.scores_idx, m.cnt_hzero_scores, x);
+                    m.sscore[x] -= w;
+                }
+            }
+            m.sat_cnt[cl] ++;
+        }
+        m.model[x] = m.model[x] ^ 1;
+    }
+    return found_solution;
+}
+void MsSolver::decimation_with_unit_propagation(vec<bool>& model, int& hards){
+    int alls = all_cls.size();
+    int softs = alls - hards;
+    int vars = model.size();
+
+    vec<long long> soft_make;
+    soft_make.growTo(vars * 2);
+// 
+    vec<int> unassigned, assign_idx;
+    unassigned.growTo(vars, 0);
+    assign_idx.growTo(vars);
+    int cnt_unassigned = 0;
+    for(int i = 0; i < vars; i ++)
+        increasePointerList(unassigned, assign_idx, cnt_unassigned, i);
+
+    vec<int> unit_soft, unit_hard, unit_hard_idx, unit_soft_idx;
+    // literały które są w jakiejś unit klauzurze
+    unit_soft.growTo(softs);
+    unit_hard.growTo(hards);
+    unit_hard_idx.growTo(vars);
+    unit_soft_idx.growTo(vars);
+    int cnt_unit_soft = 0, cnt_unit_hard = 0;
+
+    vec<int> has_unit_soft, has_unit_hard;
+    has_unit_soft.growTo(vars, 0);
+    has_unit_hard.growTo(vars, 0);
+
+    vec<bool> unvalued;
+    vec<bool> value_set;
+    unvalued.growTo(alls, 1);
+    value_set.growTo(vars, 0);
+    
+    for(int i = 0; i < alls; i ++){
+        bool s = (i >= hards);
+        int maxi = max(1, all_cls[i].snd->size() - s);
+        if(maxi == 1){
+            Lit p = (*all_cls[i].snd)[0];
+            int h = 0;
+            if(s) {
+                h = has_unit_soft[var(p)];
+                if(h == 0) increasePointerList(unit_soft, unit_soft_idx, cnt_unit_soft, var(p));                
+            } else {
+                h = has_unit_hard[var(p)];
+                if(h == 0) increasePointerList(unit_hard, unit_hard_idx, cnt_unit_hard, var(p));                
+            }            
+            // zmienna pozytywna w unit dostaje 10, negatywna dostaje 1
+            if(sign(p) and h < 10) h += 10;
+            if(!sign(p) and h % 10 != 1) h += 1;            
+            if(s) has_unit_soft[var(p)] = h;
+            else has_unit_hard[var(p)] = h;
+        }
+    }    
+    for(int i = hards; i < alls; i ++){
+        int maxi = max(1, all_cls[i].snd->size() - 1);
+        for(int j = 0; j < maxi; j ++){
+            Lit p = (*all_cls[i].snd)[j];
+            soft_make[toInt(p)] += all_cls[i].fst;
+        }
+    }
+    while(cnt_unassigned > 0){
+        int x;
+        if(cnt_unit_hard > 0){
+            // reportf("unit hard\n");
+            int r = rand() % cnt_unit_hard;
+            x = unit_hard[r];
+
+            if(value_set[x]){
+                decreasePointerList(unit_hard, unit_hard_idx, cnt_unit_hard, x);            
+                continue;
+            }                        
+            if(has_unit_hard[x] == 11) // model[x] = rand() % 2;
+            {
+                if(soft_make[x*2] <= 0 and soft_make[x*2+1] <= 0) model[x] = rand() % 2;
+                else {
+                    if (soft_make[x*2] > soft_make[x*2+1]) model[x] = 1;
+                    else model[x] = 0;
+                }
+            }
+            else if(has_unit_hard[x] == 10) model[x] = 0;
+            else if(has_unit_hard[x] == 1) model[x] = 1;
+            else { reportf("error\n"); return; }
+
+            decreasePointerList(unassigned, assign_idx, cnt_unassigned, x);
+            decreasePointerList(unit_hard, unit_hard_idx, cnt_unit_hard, x);            
+        } else if (cnt_unit_soft > 0){
+            // reportf("unit soft\n");
+            // int r = rand() % cnt_unit_soft;
+            // x = unit_soft[r];
+            x = unit_soft[0];
+            long long ms = max(soft_make[x*2], soft_make[x*2+1]);
+            int t = 15;
+            if(cnt_unit_soft > t){
+                x = unit_soft[rand() % cnt_unit_soft];
+                ms = max(soft_make[x*2], soft_make[x*2+1]);
+                for(int j = 1; j < t; j ++){
+                    int y = unit_soft[rand() % cnt_unit_soft];
+                    if(value_set[y]){
+                        decreasePointerList(unit_soft, unit_soft_idx, cnt_unit_soft, y);            
+                        continue;
+                    }
+                    long long nms = max(soft_make[y*2], soft_make[y*2+1]); 
+                    if(nms > ms or value_set[x]){
+                        x = y;
+                        ms = nms;
+                    }
+                }
+
+            } else {
+                for(int j = 1; j < cnt_unit_soft; j ++){
+                    int y = unit_soft[j];
+                    if(value_set[y]){
+                        decreasePointerList(unit_soft, unit_soft_idx, cnt_unit_soft, y);            
+                        continue;
+                    }
+                    long long nms = max(soft_make[y*2], soft_make[y*2+1]); 
+                    if(nms > ms or value_set[x]){
+                        x = y;
+                        ms = nms;
+                    }
+                }
+            }
+
+            if(value_set[x]){
+                decreasePointerList(unit_soft, unit_soft_idx, cnt_unit_soft, x);            
+                continue;
+            }
+            if(soft_make[x*2] <= 0 and soft_make[x*2+1] <= 0) model[x] = rand() % 2;
+            else {
+                if (soft_make[x*2] > soft_make[x*2+1]) model[x] = 1;
+                else model[x] = 0;
+            }
+
+            decreasePointerList(unassigned, assign_idx, cnt_unassigned, x);
+            decreasePointerList(unit_soft, unit_soft_idx, cnt_unit_soft, x);            
+
+        } else {
+            // reportf("random\n");
+            int r = rand() % cnt_unassigned;
+            x = unassigned[r];
+            model[x] = rand() % 2;
+            decreasePointerList(unassigned, assign_idx, cnt_unassigned, x);
+        }
+        // reportf("x %d\n", x);
+        Lit xp = mkLit(x, 1 - model[x]);   
+        value_set[x] = 1; 
+
+        for(int i = 0; i < lits_in_clauses[toInt(xp)]->size(); i ++){
+            int k = (*lits_in_clauses[toInt(xp)])[i];        
+            if(unvalued[k] and k >= hards){
+                int s = 1;
+                int maxi = max(1, all_cls[k].snd -> size() - s);
+                for(int j = 0; j < maxi; j ++){
+                    Lit p = ((*all_cls[k].snd)[j]);
+                    soft_make[toInt(p)] -= all_cls[k].fst;
+                }
+            }
+            unvalued[k] = 0;
+        }
+        // reportf("unvalued to 0\n");
+        for(int i = 0; i < lits_in_clauses[toInt(~xp)]->size(); i ++){
+            int k = (*lits_in_clauses[toInt(~xp)])[i];
+            // soft_make[toInt(~xp)] -= all_cls[k].fst;
+            if(!unvalued[k]) continue;
+            int unv = 0;
+            int s = (k >= hards);
+            int maxi = max(1, all_cls[k].snd -> size() - s);
+            Lit p;
+            for(int j = 0; j < maxi; j ++){
+                Lit q = ((*all_cls[k].snd)[j]);
+                if(value_set[var(q)] == 0) {
+                    unv ++;
+                    p = q;
+                }
+                if(unv > 1) break;
+            }
+            if(unv == 1){
+                int h = 0;
+                if(s) {
+                    h = has_unit_soft[var(p)];
+                    if(h == 0) increasePointerList(unit_soft, unit_soft_idx, cnt_unit_soft, var(p));
+                } else {
+                    h = has_unit_hard[var(p)];
+                    if(h == 0) increasePointerList(unit_hard, unit_hard_idx, cnt_unit_hard, var(p));
+                }            
+                if(sign(p) and h < 10) h += 10;
+                if(!sign(p) and h % 10 != 1) h += 1;            
+
+                if(s) has_unit_soft[var(p)] = h;
+                else has_unit_hard[var(p)] = h;
+
+                unvalued[k] = 0;
+            } else if(unv == 0) unvalued[k] = 0;
+        }
+    }
+}
+bool MsSolver::run_satlike(bool only_hards, const int& time_limit){
+    if(hards == -1) set_lits_in_clauses();
+    int H = hards, A = all_cls.size();
+    int V = declared_n_vars;
+    long double avg_soft_weight = 0;
+
+    vec<weight_t> working_weights;
+    working_weights.growTo(A);
+
+    int max_clause_length = 0;
+    for(int i = 0; i < A; i ++){
+        int s = (i >= H);
+        int maxi = max(1, all_cls[i].snd->size() - s);
+        max_clause_length = max(max_clause_length, maxi);
+
+        working_weights[i] = all_cls[i].fst;
+        if(only_hards and s) working_weights[i] = 0;            
+        if(s) avg_soft_weight += all_cls[i].fst;
+    }
+    avg_soft_weight /= max(1, A-H);
+
+    // SATLike parameters: t-BMS sp-smoothing probability in weighting scheme
+    int t = 15, sp = 100000;
+    int h_inc = 3, soft_max = 0;
+    int max_flips = 10000000, max_non_improve_flips = 10000000;
+    if(avg_soft_weight >= 10000){
+        h_inc = 300;
+        soft_max = 500;
+    }
+    if (declared_n_vars> 2000) sp = 1;
+
+    // SATLike parameters: random elements instead of the prioritized ones  
+    int rdprob = 1, rwprob = 10;
+
+    Metrics m(V, A, H);
+    m.initialize_metrics(1);
+    
+    vec<int> score;
+    score.growTo(V,0);
+    
+    // different options for the initial assignments
+
+    // if(best_goalvalue != INT_MAX and best_model.size() > 0){
+        // for(int i = 0; i < model.size(); i ++) model[i] = best_model[i];
+    // } else 
+    decimation_with_unit_propagation(m.model, V);
+
+    // if(!first_sat_based_model(m.model, H)) return 0;
+    
+    // for(int i = 0; i < model.size(); i ++){
+        // model[i] = rand() % 2;
+    // }
+
+    for(int i = 0; i < A; i ++){
+        int w = abs(working_weights[i]);
+        int sat = 0;
+        bool s = (i >= hards);
+        int maxi = max(1, all_cls[i].snd->size() - s);           
+        for(int j = 0; j < maxi; j ++){
+            Lit p = (*all_cls[i].snd)[j];
+            if (m.model[var(p)] == polarity(p)) {
+                sat ++;
+                m.last_sat[i] = var(p);
+            }
+        }
+        m.sat_cnt[i] = sat;
+        if (!sat) {        
+            if(s) increasePointerList(m.unsat_softs, m.unsat_idx, m.cnt_unsat_softs, i);            
+            else increasePointerList(m.unsat_hards, m.unsat_idx, m.cnt_unsat_hards, i);            
+
+            if(s) m.model_scost += all_cls[i].fst;
+            else m.model_hcost += 1;
+            for(int j = 0; j < maxi; j ++){
+                Lit p = (*all_cls[i].snd)[j];
+                m.sscore[var(p)] += w;               
+            }
+        } else {
+            increasePointerList(m.sat_clauses, m.unsat_idx, m.cnt_sat_clauses, i);            
+            if (sat == 1){
+                Var q = m.last_sat[i];
+                m.sscore[q] -= w;
+            }
+        }
+    }
+    for(Var x = 0; x < V; x ++){
+        if(m.sscore[x] > 0) 
+            increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, x);
+    }
+
+    bool solution_found = false;
+    extern time_t wall_clock_time;
+
+    int sm = 0, inc = 0;
+    int step = 1000;
+    for(int jj = 0; jj < max_flips; jj ++) {
+        if(!time_limit or difftime(time(NULL), wall_clock_time) >= time_limit) break;
+        if(m.model_hcost == 0 and m.model_scost < m.best_found){
+            max_flips = jj + max_non_improve_flips;
+            m.best_found = m.model_scost;
+        }
+        if(m.model_hcost == 0 and m.model_scost < best_goalvalue){
+            best_goalvalue = m.model_scost;
+            char* tmp = toString(m.model_scost);    
+            printf("o %s\n", tmp), fflush(stdout);            
+
+            m.model.copyTo(best_model);
+            solution_found = true;
+            if(only_hards) return true;
+        }
+
+        Var x = -1;
+        if(m.cnt_hplus_scores > 0){     
+            int r = rand() % m.cnt_hplus_scores;
+            x = m.hplus_scores[r];
+            if(rand() % 100 < rdprob);
+            else if(m.cnt_hplus_scores < t) {
+                for(int j = 0; j < m.cnt_hplus_scores; j ++){                
+                    int y = m.hplus_scores[j];
+                    if(m.sscore[y] > m.sscore[x] or (m.sscore[y] == m.sscore[x] and m.flip_time[y] < m.flip_time[x])) x = y;
+                }
+            } else {
+                for(int j = 1; j < t; j ++){
+                    r = rand() % m.cnt_hplus_scores;
+                    int y = m.hplus_scores[r];
+                    if(m.sscore[y] > m.sscore[x] or (m.sscore[y] == m.sscore[x] and m.flip_time[y] < m.flip_time[x])) x = y;
+                }
+            }
+        } else {  
+            if(rand() % 10000000 < sp){
+                sm ++;
+                for(int i = 0; i < m.cnt_sat_clauses; i ++){
+                    int cl = m.sat_clauses[i];                    
+                    long long w1 = working_weights[cl], w2 = working_weights[cl];
+
+                    // zmniejszam wage klauzuli spelnionej
+                    if(all_cls[cl].fst == 0) continue;
+
+                    if(w1 < -h_inc) w2 += h_inc;
+                    else if(w1 > 1) w2 --;
+                    else continue;
+
+                    working_weights[cl] = w2;
+                    long long d = abs(w2 - w1);
+
+                    // wiec cofam koszt zmiennej
+                    if(m.sat_cnt[cl] == 1){
+                        bool s = (cl >= hards);
+                        int maxi = max(1, all_cls[cl].snd->size() - s);
+                        if(m.last_sat[cl] == -1){
+                            for(int j = 0; j < maxi; j ++){
+                                Lit p = (*all_cls[cl].snd)[j];
+                                Var q = var(p);
+                                if (m.model[q] != sign(p)) {
+                                    m.last_sat[cl] = q;
+                                    break;
+                                }
+                            }
+                        }
+                        Var q = m.last_sat[cl]; 
+                        if(m.sscore[q] <= 0 and m.sscore[q] + d > 0)
+                            increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                        m.sscore[q] += d;
+                    }
+                }   
+            } else {
+                inc ++; 
+                for(int i = 0; i < m.cnt_unsat_hards + m.cnt_unsat_softs; i ++){
+                    int cl;
+                    if (i < m.cnt_unsat_hards) { cl = m.unsat_hards[i]; }
+                    else cl = m.unsat_softs[i - m.cnt_unsat_hards];
+                    long long w1 = working_weights[cl], w2 = working_weights[cl];
+
+                    if(all_cls[cl].fst == 0) continue;
+
+                    if(w1 < 0) w2 -= h_inc;
+                    else if(w1 <= soft_max) w2 ++;
+                    else continue;
+
+                    working_weights[cl] = w2;
+                    long long d = abs(w2 - w1);
+                
+                    bool s = (cl >= hards);
+                    int maxi = max(1, all_cls[cl].snd->size() - s);
+                    for(int j = 0; j < maxi; j ++){
+                        Lit p = (*all_cls[cl].snd)[j];
+                        Var q = var(p);
+                        if(m.sscore[q] <= 0 and m.sscore[q] + d > 0)
+                            increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                        m.sscore[q] += d;
+                    }                    
+                }
+            }
+            int idx = -1;
+            if (m.cnt_unsat_hards > 0) {
+                int r = rand() % m.cnt_unsat_hards;                
+                idx = m.unsat_hards[r];
+            } else if (m.cnt_unsat_softs > 0){
+                idx = m.unsat_softs[0];
+                m.best_selected[0] = idx;          
+                int best_idx_cnt = m.selected_count[idx];                
+                int best_selected_cnt = 1;             
+
+                for(int j = 1; j < m.cnt_unsat_softs; j ++){                
+                    int idy = m.unsat_softs[j];
+                    if(m.selected_count[idy] < best_idx_cnt){
+                        best_idx_cnt = m.selected_count[idy];
+                        m.best_selected[0] = idy;
+                        best_selected_cnt = 1;
+                    } else if (m.selected_count[idy] == best_idx_cnt){
+                        m.best_selected[best_selected_cnt] = idy;
+                        best_selected_cnt ++;
+                    }
+                }
+                idx = m.best_selected[rand() % best_selected_cnt];
+                m.selected_count[idx] ++;
+            } else { 
+                reportf("Error!\n"); 
+                return solution_found; 
+            }
+            x = var((*all_cls[idx].snd)[0]);
+            bool s = (idx >= hards);
+            int maxi = max(1, all_cls[idx].snd->size() - s);
+            if(rand() % 100 < rwprob) x = var((*all_cls[idx].snd)[rand() % maxi]);
+            else{
+                for(int j = 1; j < maxi; j ++){
+                    Lit p = (*all_cls[idx].snd)[j];
+                    if (m.sscore[var(p)] > m.sscore[x]) x = var(p);
+                }
+            }
+        }
+        Lit xp = mkLit(x, 1 - m.model[x]); 
+        int prev_score = m.sscore[x];
+        m.flip_time[x] = jj + 1;  
+        for(int i = 0; i < lits_in_clauses[toInt(xp)]->size(); i ++){
+            int cl = (*lits_in_clauses[toInt(xp)])[i];
+            long long w = abs(working_weights[cl]);
+            bool s = (cl >= hards);            
+            int maxi = max(1, all_cls[cl].snd->size() - s);
+            if(m.sat_cnt[cl] == 2){                
+                if(m.last_sat[cl] == x or m.last_sat[cl] == -1){
+                        for(int j = 0; j < maxi; j ++){
+                            Lit p = (*all_cls[cl].snd)[j];
+                            Var q = var(p);
+                            if (p != xp and m.model[q] != sign(p)) {
+                                m.last_sat[cl] = q;
+                                break;
+                            }
+                        }
+                }
+                if(m.last_sat[cl] == -1) { reportf("seg last sat\n");  continue; return solution_found; }
+                Var q = m.last_sat[cl];
+                if(m.sscore[q] > 0 and m.sscore[q] - w <= 0)
+                    decreasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                m.sscore[q] -= w;
+            }
+            else if(m.sat_cnt[cl] == 1){
+                decreasePointerList(m.sat_clauses, m.unsat_idx, m.cnt_sat_clauses, cl);
+
+                if(s) increasePointerList(m.unsat_softs, m.unsat_idx, m.cnt_unsat_softs, cl);
+                else increasePointerList(m.unsat_hards, m.unsat_idx, m.cnt_unsat_hards, cl);
+
+                for(int j = 0; j < maxi; j ++){
+                    Var q = var((*all_cls[cl].snd)[j]);
+                    if(m.sscore[q] <= 0 and m.sscore[q] + w > 0)
+                        increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                    m.sscore[q] += w;
+                }
+                if(m.sscore[x] <= 0 and m.sscore[x] + w > 0)
+                    increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, x);
+                m.sscore[x] += w;
+
+                m.last_sat[cl] = -1;
+
+                if(s) m.model_scost += all_cls[cl].fst;
+                else m.model_hcost += 1;
+            } else if (m.last_sat[cl] == x) m.last_sat[cl] = -1;
+            m.sat_cnt[cl] --;
+        }                
+        xp = ~xp;
+        for(int i = 0; i < lits_in_clauses[toInt(xp)]->size(); i ++){
+            int cl = (*lits_in_clauses[toInt(xp)])[i];            
+            long long w = abs(working_weights[cl]);
+            bool s = (cl >= hards);
+            int maxi = max(1, all_cls[cl].snd->size() - s);
+            if(m.sat_cnt[cl] == 1){
+                if(m.last_sat[cl] == -1){
+                    for(int j = 0; j < maxi; j ++){
+                        Lit p = (*all_cls[cl].snd)[j];
+                        Var q = var(p);
+                        if (m.model[q] != sign(p)) {
+                            m.last_sat[cl] = q;
+                            break;
+                        }
+                    }
+                }
+                Var q = m.last_sat[cl];
+                if(q == -1) reportf("no last sat\n");
+                if(m.sscore[q] <= 0 and m.sscore[q] + w > 0)
+                    increasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                    
+                m.sscore[q] += w;
+            } else if(m.sat_cnt[cl] == 0){
+                if(s) decreasePointerList(m.unsat_softs, m.unsat_idx, m.cnt_unsat_softs, cl);
+                else decreasePointerList(m.unsat_hards, m.unsat_idx, m.cnt_unsat_hards, cl);
+
+                increasePointerList(m.sat_clauses, m.unsat_idx, m.cnt_sat_clauses, cl);
+
+                m.last_sat[cl] = x;
+                for(int j = 0; j < maxi; j ++){
+                    Var q = var((*all_cls[cl].snd)[j]);
+                    if(m.sscore[q] > 0 and m.sscore[q] - w <= 0)
+                        decreasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, q);
+                    m.sscore[q] -= w;
+                }
+                if(m.sscore[x] > 0 and m.sscore[x] - w <= 0)
+                    decreasePointerList(m.hplus_scores, m.scores_idx, m.cnt_hplus_scores, x);
+                m.sscore[x] -= w;
+                if(s) m.model_scost -= all_cls[cl].fst;
+                else m.model_hcost -= 1;
+            }
+            m.sat_cnt[cl] ++;
+        }
+        m.model[x] = m.model[x] ^ 1;
+    }
+    return solution_found;
+}
+// Run incomplete functions first depending on the given time for them.
+// Return true if any solution found then only-hards flag turns to false.
+bool MsSolver::start_incomplete()
+{
+    bool status = false;
+    if (opt_dist + opt_satlike > 0){
+        set_lits_in_clauses();
+    }
+    if(opt_dist > 0) {
+        if (opt_verbosity > 0) reportf("Run DistUP for %d seconds.\n", opt_dist);
+        if(run_dist(opt_dist)) status = true;
+    }
+    if(opt_satlike > 0) {
+        if (opt_verbosity > 0) reportf("Run SATLike 3.0 for %d seconds.\n", opt_satlike);
+        if(run_satlike(1, opt_dist + opt_satlike)) {
+            status = true;
+            run_satlike(0, opt_dist + opt_satlike);
+        }
+    }
+    return status;
+}
+///////////////////////////////////////////////////////////////////////////
 void MsSolver::maxsat_solve(solve_Command cmd)
 {
+    if(start_incomplete()) opt_only_hards = false;
+
     if (!okay()) {
         if (opt_verbosity >= 1) sat_solver.printVarsCls();
         return;
@@ -360,13 +1261,14 @@ void MsSolver::maxsat_solve(solve_Command cmd)
     }
     sat_solver.verbosity = opt_verbosity - 1;
 
-    goal_gcd = soft_cls[0].fst;
+    if (soft_cls.size() > 0) goal_gcd = soft_cls[0].fst;
+    else goal_gcd = 1;
+
     for (int i = 1; i < soft_cls.size() && goal_gcd != 1; ++i) goal_gcd = gcd(goal_gcd, soft_cls[i].fst);
     if (goal_gcd != 1) {
         if (LB_goalvalue != Int_MIN) LB_goalvalue /= Int(goal_gcd);
         if (UB_goalvalue != Int_MAX) UB_goalvalue /= Int(goal_gcd);
     }
-
     assert(best_goalvalue == Int_MAX);
 
     opt_sort_thres *= opt_goal_bias;
@@ -437,7 +1339,7 @@ void MsSolver::maxsat_solve(solve_Command cmd)
     }
     if (j < soft_cls.size()) soft_cls.shrink(soft_cls.size() - j);
     top_for_strat = top_for_hard = soft_cls.size();
-    Sort::sort(soft_cls);
+    if (soft_cls.size() > 0) Sort::sort(soft_cls);
     weighted_instance = (soft_cls.size() > 1 && soft_cls[0].fst != soft_cls.last().fst);
     for (int i = 0; i < soft_cls.size(); i++) {
         Lit p = soft_cls[i].snd->last();
@@ -451,8 +1353,10 @@ void MsSolver::maxsat_solve(solve_Command cmd)
     if (LB_goalvalue < LB_goalval) LB_goalvalue = LB_goalval;
     if (UB_goalvalue == Int_MAX)   UB_goalvalue = UB_goalval;
     else {
-        for (int i = 0; i < psCs.size(); i++)
-            goal_ps.push(~psCs[i].fst), goal_Cs.push(soft_cls[psCs[i].snd].fst);
+        for (int i = 0; i < psCs.size(); i++){
+            goal_ps.push(~psCs[i].fst);
+            goal_Cs.push(soft_cls[psCs[i].snd].fst);                                 
+        }
         if (try_lessthan == Int_MAX) try_lessthan = ++UB_goalvalue;
         if (goal_ps.size() > 0) {
             addConstr(goal_ps, goal_Cs, try_lessthan - fixed_goalval, -2, assump_lit);
@@ -460,8 +1364,10 @@ void MsSolver::maxsat_solve(solve_Command cmd)
         }
     }
     if (opt_minimization != 1 || sorted_assump_Cs.size() == 0) {
-        for (int i = 0; i < psCs.size(); i++)
-            assump_ps.push(psCs[i].fst), assump_Cs.push(Int(soft_cls[psCs[i].snd].fst));
+        for (int i = 0; i < psCs.size(); i++){            
+            assump_ps.push(psCs[i].fst);
+            assump_Cs.push(Int(soft_cls[psCs[i].snd].fst));             
+        }
         for (int i = 0; i < soft_cls.size(); i++) { 
             if (soft_cls[i].snd->size() > 1) sat_solver.addClause(*soft_cls[i].snd);
         }
@@ -502,36 +1408,75 @@ void MsSolver::maxsat_solve(solve_Command cmd)
         preprocess_soft_cls(assump_ps, assump_Cs, max_assump, max_assump_Cs, delayed_assump, delayed_assump_sum);
     if (opt_verbosity >= 1)
         sat_solver.printVarsCls(goal_ps.size() > 0, &soft_cls, top_for_strat);
-
-    if (opt_polarity_sug != 0)
+    if (opt_polarity_sug != 0) { 
         for (int i = 0; i < soft_cls.size(); i++){
             Lit p = soft_cls[i].snd->last(); if (soft_cls[i].snd->size() == 1) p = ~p;
             bool dir = opt_polarity_sug > 0 ? !sign(p) : sign(p);
             sat_solver.setPolarity(var(p), LBOOL(dir));
         }
+    }
     bool first_time = false;
     int start_solving_cpu = cpuTime();
     if (opt_cpu_lim != INT32_MAX) {
         first_time=true; limitTime(start_solving_cpu + (opt_cpu_lim - start_solving_cpu)/4);
     }
+// #ifdef USE_SCIP
+//     reportf("scip\n");
+//     extern bool opt_use_scip_slvr;
+//     int sat_orig_vars = sat_solver.nVars(), sat_orig_cls = sat_solver.nClauses();
+//     if (opt_use_scip_slvr)
+//         scip_solve(&assump_ps, &assump_Cs, &delayed_assump, weighted_instance, sat_orig_vars, sat_orig_cls);
+// #endif
+    lbool status = l_Undef;
+
+    if(opt_only_hards) {
+        if (opt_verbosity > 0) reportf("Run SAT query with only hard clauses.\n");
+        status = sat_solver.solveLimited(Minisat::vec<Lit>());
+        opt_only_hards = false;
+    }
+    if(status == l_True){
+        vec<bool> model;
+        model.growTo(pb_n_vars, 0);
+        Minisat::vec<Lit> soft_unsat;
+        for (Var x = 0; x < pb_n_vars; x++)
+            assert(sat_solver.modelValue(x) != l_Undef),
+            model[x] = (sat_solver.modelValue(x) == l_True);
+        
+        for (int i = 0; i < top_for_strat; i++)
+            if (soft_cls[i].snd->size() > 1)
+                model[var(soft_cls[i].snd->last())] = !sign(soft_cls[i].snd->last());
+        
+        Int goalvalue = evalGoal(soft_cls, model, soft_unsat) + fixed_goalval;
+        extern bool opt_satisfiable_out;
+        if (
 #ifdef USE_SCIP
-    extern bool opt_use_scip_slvr;
-    int sat_orig_vars = sat_solver.nVars(), sat_orig_cls = sat_solver.nClauses();
-    if (opt_use_scip_slvr)
-        scip_solve(&assump_ps, &assump_Cs, &delayed_assump, weighted_instance, sat_orig_vars, sat_orig_cls);
-#endif
-    lbool status;
+            !SCIP_found_opt && 
+#endif                
+            (goalvalue < best_goalvalue || opt_output_top > 0 && goalvalue == best_goalvalue)) {
+            best_goalvalue = goalvalue;
+            model.moveTo(best_model);
+            char* tmp = toString(best_goalvalue * goal_gcd);
+            if (opt_satisfiable_out && opt_output_top < 0 && (opt_satlive || opt_verbosity == 0))
+                printf("o %s\n", tmp), fflush(stdout);
+            else if (opt_verbosity > 0 || !opt_satisfiable_out) 
+                reportf("%s solution: %s\n", (optimum_found ? "Next" : "Found"), tmp);
+            xfree(tmp);
+        } else model.clear(); 
+        if (best_goalvalue < UB_goalvalue && opt_output_top < 0) UB_goalvalue = best_goalvalue;
+    }    
     while (1) {
+    //   reportf("%d\n", cntr ++);
       if (use_base_assump) for (int i = 0; i < base_assump.size(); i++) assump_ps.push(base_assump[i]);
       if (opt_minimization == 1 && opt_to_bin_search && opt_unsat_conflicts >= 100000 &&
                                  sat_solver.conflicts < opt_unsat_conflicts - 500)
           sat_solver.setConfBudget(opt_unsat_conflicts - sat_solver.conflicts);
       else sat_solver.budgetOff();
+
       status = 
           base_assump.size() == 1 && base_assump[0] == assump_lit ? l_True :
           base_assump.size() == 1 && base_assump[0] == ~assump_lit ? l_False :
           sat_solver.solveLimited(assump_ps);
-      if (use_base_assump) {
+      if (use_base_assump and !first_time) {
           for (int i = 0; i < base_assump.size(); i++) {
               if (status == l_True && var(base_assump[i]) < pb_n_vars) addUnit(base_assump[i]);
               assump_ps.pop();
@@ -548,6 +1493,7 @@ void MsSolver::maxsat_solve(solve_Command cmd)
         if (asynch_interrupt) { reportf("*** Interrupted ***\n"); break; }
         if (opt_minimization == 1 && opt_to_bin_search && sat_solver.conflicts >= opt_unsat_conflicts) goto SwitchSearchMethod;
       } else if (status == l_True) { // SAT returned
+        //  reportf("SAT\n");
         if (opt_minimization == 1 && opt_delay_init_constraints) {
             opt_delay_init_constraints = false;
             convertPbs(false);
@@ -576,10 +1522,11 @@ void MsSolver::maxsat_solve(solve_Command cmd)
             sat_solver.addClause_(ban);
         }else{
             vec<bool> model;
+            model.growTo(pb_n_vars, 0);
             Minisat::vec<Lit> soft_unsat;
             for (Var x = 0; x < pb_n_vars; x++)
-                assert(sat_solver.modelValue(x) != l_Undef),
-                model.push(sat_solver.modelValue(x) == l_True);
+                // assert(sat_solver.modelValue(x) != l_Undef),
+                model[x] = (sat_solver.modelValue(x) == l_True);
             for (int i = 0; i < top_for_strat; i++)
                 if (soft_cls[i].snd->size() > 1)
                     model[var(soft_cls[i].snd->last())] = !sign(soft_cls[i].snd->last());
@@ -598,6 +1545,8 @@ void MsSolver::maxsat_solve(solve_Command cmd)
                 else if (opt_verbosity > 0 || !opt_satisfiable_out) 
                     reportf("%s solution: %s\n", (optimum_found ? "Next" : "Found"), tmp);
                 xfree(tmp);
+                // for(int x = 0; x < pb_n_vars; x ++)
+                //     sat_solver.setPolarity(x, 1 - best_model[x]);
             } else model.clear(); 
             if (best_goalvalue < UB_goalvalue && opt_output_top < 0) UB_goalvalue = best_goalvalue;
             else if (opt_output_top > 1) {
@@ -609,7 +1558,7 @@ void MsSolver::maxsat_solve(solve_Command cmd)
                 }
             }
             if (cmd == sc_FirstSolution || (opt_minimization == 1 || UB_goalvalue == LB_goalvalue) &&
-                                           sorted_assump_Cs.size() == 0 && delayed_assump.empty())
+                                           sorted_assump_Cs.size() == 0 && delayed_assump.empty() && false) {
                 if (opt_minimization == 1 && opt_output_top > 0) {
                     outputResult(*this, false);
                     if (opt_verbosity > 0 && !optimum_found) {
@@ -633,11 +1582,12 @@ void MsSolver::maxsat_solve(solve_Command cmd)
                         continue;
                     }
                 } else break;
+            }
             if (opt_minimization == 1) {
                 assert(sorted_assump_Cs.size() > 0 || !delayed_assump.empty()); 
                 int old_top = top_for_strat;
                 if (delayed_assump.empty() || sorted_assump_Cs.size() > 0 && Int(sorted_assump_Cs.last()) > delayed_assump.top().fst) {
-                    if (opt_lexicographic && multi_level_opt[sorted_assump_Cs.size()]) {
+                    if (sorted_assump_Cs.size() > 0 && opt_lexicographic && multi_level_opt[sorted_assump_Cs.size()]) {
                         bool standard_multi_level_opt = multi_level_opt[sorted_assump_Cs.size()] & 1;
                         bool general_multi_level_opt = multi_level_opt[sorted_assump_Cs.size()] & 2;
                         Int bound = sum_sorted_soft_cls[sorted_assump_Cs.size()].fst + delayed_assump_sum;
@@ -653,7 +1603,8 @@ void MsSolver::maxsat_solve(solve_Command cmd)
                             if (opt_verbosity > 0) reportf("BMO - done.\n");
                         }
                     }
-                    max_assump_Cs = do_stratification(sat_solver, sorted_assump_Cs, soft_cls, top_for_strat, assump_ps, assump_Cs);
+                    if(sorted_assump_Cs.size() > 0)
+                        max_assump_Cs = do_stratification(sat_solver, sorted_assump_Cs, soft_cls, top_for_strat, assump_ps, assump_Cs);
                 } else {
                     max_assump_Cs = delayed_assump.top().fst;
                     vec<Pair<Lit, Int> > new_assump;
@@ -880,6 +1831,7 @@ SwitchSearchMethod:
                 if (j < assump_ps.size() && psCs[i].fst == assump_ps[j]) j++;
             }
             if (opt_to_bin_search) {
+                // reportf("BIN\n");
                 for (int i = assump_ps.size() - 1; i >= 0 && assump_ps[i] > max_assump; i--)
                     assump_ps.pop(), assump_Cs.pop();
                 goal_ps.clear(); goal_Cs.clear();
