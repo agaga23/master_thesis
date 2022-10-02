@@ -1,0 +1,672 @@
+% Opcje klasy 'iithesis' opisane sa w komentarzach w pliku klasy. Za ich pomoca
+% ustawia sie przede wszystkim jezyk oraz rodzaj (lic/inz/mgr) pracy.
+\documentclass[shortabstract]{iithesis}
+\usepackage[utf8]{inputenc}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{multirow}
+\graphicspath{ {./pseudokody/} }
+%\setcounter{tocdepth}{3}
+%\setcounter{secnumdepth}{3}
+
+%%%%% DANE DO STRONY TYTUŁOWEJ
+% Niezaleznie od jezyka pracy wybranego w opcjach klasy, tytul i streszczenie
+% pracy nalezy podac zarowno w jezyku polskim, jak i angielskim.
+% Pamietaj o madrym (zgodnym z logicznym rozbiorem zdania oraz estetyka) recznym
+% zlamaniu wierszy w temacie pracy, zwlaszcza tego w jezyku pracy. Uzyj do tego
+% polecenia \fmlinebreak.
+\polishtitle    {Analiza algorytmów i heurystyk \fmlinebreak stosowanych w niezupełnych solverach problemu MaxSAT\fmlinebreak oraz implementacja najlepszych z~nich}
+\englishtitle   {The analysis of algorithms and heuristics applied to incomplete solvers for~MaxSAT problem and implementation of the best ones.}
+\polishabstract {
+	MaxSAT (Maximum Satisfiability) to NP-trudne zagadnienie optymalizacyjne, w~którym dana jest formuła boolowska w postaci CNF i szukane jest wartościowanie zmiennych, które spełni jak najwięcej klauzul z tej formuły. Wersja WPMS (\textit{Weighted Partial MaxSAT}) problemu polega na tym, że szukane rozwiązanie bezwzględnie musi spełnić część klauzul oznaczonych jako \textit{hard}, a pozostałym klauzulom (\textit{soft}) przypisano wagi i celem jest minimalizacja sumy wag niespełnionych klauzul.
+
+	W związku z szerokim zastosowaniem problemu MaxSAT w przemyśle, rozwijane są algorytmy heurystyczne, które w szybkim czasie znajdują dobre rozwiązania tego problemu. W 2006 roku powstał konkurs \textit{MaxSAT Evaluation} przy~konferencji SAT, w którym biorą udział najnowsze algorytmy rozwiązujące MaxSAT w~dwóch kategoriach - \textit{complete}, gdzie solvery szukają rozwiązań optymalnych w~czasie 1~godz. oraz \textit{incomplete}, gdzie należy przedstawić rozwiązanie o jak najmniejszym koszcie w~czasie 1~lub~5~min.
+	
+	Celem pracy jest analiza algorytmów i heurystyk stosowanych w solverach \textit{incomplete}, implementacja najlepszych z nich i prezentacja wybranego podejścia jako wariant solvera UWrMaxSAT w wersji \textit{incomplete}.
+	UWrMaxSAT to solver \textit{complete}, który powstał w Instytucie Informatyki Uniwersytetu Wrocławskiego i od 2019 regularnie znajduje się w czołówce najlepszych solverów w swojej kategorii.
+	
+	Poniższa praca analizuje algorytmy \textit{SAT-based}, \textit{local-search} oraz hybrydowe, które pojawiły się i zmieniały w ostatnich latach w konkursie. Następnie opisuje eksperymenty łączenia różnych podejść z UWrMaxSAT-em na testach z 2021 roku. Ostatecznie zaprezentowany jest algorytm hybrydowy, który łączy solver SATLike z~UWrMaxSAT-em jako nowy konkurencyjny solver \textit{incomplete}.
+}
+
+\englishabstract{
+	Maximum Satisfiability Problem is an optimization version of SAT in which a~Boolean formula in CNF is given and the task is about valuing variables to satisfy the highest number of clauses. WPMS (Weighted Partial MaxSAT) distinguishes \textit{hard} clauses which have to be satisfied absolutely and \textit{soft} clauses which have assigned weights. Then the goal is to minimize the total weight of the unsatisfied clauses.
+	
+	Regarding to the wide application of the MaxSAT problem in industry, heuristic algorithms are being developed as they find good solutions of this problem quickly. In~2006, the \textit{MaxSAT Evaluation} competition was established at the SAT conference, in which the latest algorithms for solving MaxSAT take part in two categories - \textit{complete}, in which solvers seek for optimal solutions within 1~hour and \textit{incomplete}, in which the best found solution should be presented in 1~or~5~minutes.
+
+The aim of the work is to analyze the algorithms and heuristics used in \textit{incomplete} solvers, implement the best of them and present the selected approach as a variant of UWrMaxSAT in the \textit{incomplete} version.
+\textit {UWrMaxSAT} is a \textit {complete} solver, which was built at the Institute of Computer Science of the University of~Wrocław and since 2019 it has been regularly ranked among the best solvers in~its category.
+
+This work analyzes the SAT-based, local-search and hybrid algorithms that have appeared and have been changing in recent years in the competition. Then the~experiments of combining various approaches with UWrMaxSAT are described on~tests from 2021. Finally, a hybrid algorithm that combines the SATLike solver with UWrMaxSAT is presented as a new competing \textit{incomplete} solver.
+}
+% w pracach wielu autorow nazwiska mozna oddzielic poleceniem \and
+\author         {Agnieszka Dudek}
+% w przypadku kilku promotorow, lub koniecznosci podania ich afiliacji, linie
+% w ponizszym poleceniu mozna zlamac poleceniem \fmlinebreak
+\advisor        {dr hab. Marek Piotrów}
+%\date          {}                     % Data zlozenia pracy
+% Dane do oswiadczenia o autorskim wykonaniu
+%\transcriptnum {}                     % Numer indeksu
+%\advisorgen    {dr. Jana Kowalskiego} % Nazwisko promotora w dopelniaczu
+%%%%%
+
+%%%%% WLASNE DODATKOWE PAKIETY
+%
+%\usepackage{graphicx,listings,amsmath,amssymb,amsthm,amsfonts,tikz}
+%
+%%%%% WŁASNE DEFINICJE I POLECENIA
+%
+%\theoremstyle{definition} \newtheorem{definition}{Definition}[chapter]
+%\theoremstyle{remark} \newtheorem{remark}[definition]{Observation}
+%\theoremstyle{plain} \newtheorem{theorem}[definition]{Theorem}
+%\theoremstyle{plain} \newtheorem{lemma}[definition]{Lemma}
+%\renewcommand \qedsymbol {\ensuremath{\square}}
+% ...
+%%%%%
+
+\begin{document}
+
+%%%%% POCZĄTEK ZASADNICZEGO TEKSTU PRACY
+\chapter{Wstęp}
+MaxSAT (\textit{Maximum satisfiability problem}) to problem optymalizacyjny, który, podobnie jak problem SAT, otrzymuje boolowską formułę w CNF i szuka wartościowania zmiennych, aby spełnić klauzule w niej zawarte. Jeśli jednak nie da się spełnić całej formuły, MaxSAT ma za zadanie zmaksymalizować liczbę spełnionych klauzul.
+
+Klauzulom możemy nadać wagi, aby wyróżnić te, na których spełnieniu zależy nam bardziej lub mniej. Wtedy naszym celem jest maksymalizacja sumy wag spełnionych klauzul. 
+Dodatkowo wyróżnia się wariant problemu \textit{partial}, w~którym część klauzul (\textit{hard}) jest szczególnie priorytetyzowana i zadanie wymaga spełnienia wszystkich tych klauzul oraz maksymalizacji liczby (sumy wag) spełnionych klauzul z pozostałej grupy (\textit{soft}). Takie rozgraniczenie dwóch grup w prosty sposób można uzyskać przy pomocy wag, ale~jego wyróżnienie jest istotne przy modelowaniu algorytmów do rozwiązania danej instancji problemu.
+
+MaxSAT jest NP-trudnym wariantem problemu SAT, ale dzięki temu, że posiada wiele zastosowań w przemyśle, np. przy planowaniu zadań, optymalizacji kosztów~\cite{optcost}, \textit{routing-u} lub klasteryzacji \cite{clustering} (\textit{correlation clustering}), powstaje wiele programów, które~bardzo efektywnie radzą sobie z rzeczywistymi instancjami tego problemu. 
+
+W 2006 roku powstał konkurs MaxSAT Evaluation \cite{maxsateval} przy konferencji SAT (\textit{International Conference on Theory and Applications of Satisfiability Testing}) i~biorą w nim udział najnowsze i najlepsze solvery rozwiązujące MaxSAT-a.
+W konkursie wyszczególnione są 2 kategorie problemu:
+\begin{enumerate}
+	\item dla solverów zupełnych (\textit{complete}) - gdzie programy muszą znaleźć rozwiązania optymalne dla wybranych instancji problemu w czasie $1$ godziny,
+	\item dla solverów niezupełnych (\textit{incomplete}) - gdzie programy muszą znaleźć poprawne rozwiązania o jak najmniejszym koszcie w czasie $1$ min lub $5$ min, ale bez konieczności spełnienia warunku optymalności.
+\end{enumerate}
+
+W Instytucie Informatyki we Wrocławiu powstał solver zupełny UWrMaxSAT rozwijany przez pana dr. hab. Marka Piotrowa, który od razu (od 2019) wielokrotnie stawał na podium w swojej kategorii, a w 2020 roku wygrał główną podkategorię dla wariantu z wagami i~priorytetowymi klauzulami (\textit{weighted partial}).
+
+Celem tego projektu była analiza algorytmów stosowanych w solverach niezupełnych, które szukają dobrych (niekoniecznie optymalnych) rozwiązań w bardzo krótkim czasie. Na podstawie kolejnych solverów, które pojawiały się w konkursie \textit{MaxSAT Evaluation} starałam się zrozumieć i opisać poszczególne rozwiązania, jakie były odkrywane, rozwijane i ulepszane w ostatnich latach dla problemu MaxSAT. Następnie implementacja najlepszych algorytmów zintegrowana z UWrMaxSAT-em miała stworzyć nowy efektywny solver w kategorii \textit{incomplete}.
+
+\noindent
+Poniższa praca dzieli się następująco:
+\paragraph{Rozdział 2} Przedstawiam definicję problemu MaxSAT, konkurs \textit{MaxSAT Evaluation}, w którym co roku biorą udział najlepsze solvery oraz solver UWrMaxSAT.
+\paragraph{Rozdział 3} Analizuję różne podejścia stosowane do rozwiązywania MaxSAT-a zaczynając od początkowego \textit{branch-and-bound} i kończąc na najnowszych solverach hybrydowych. Zwracam szczególną uwagę na algorytmy i solvery, które pojawiły się w konkursie w ostatnich latach.
+\paragraph{Rozdział 4} Opisuję moje implementacje algorytmów oraz eksperymenty zintegrowania UWrMaxSAT-a z różnymi heurystykami, aby~działał też jako solver niezupełny i przedstawiam swoje wyniki.
+\paragraph{Rozdział 5} Prezentuję wybrany algorytm jako możliwą wersję \textit{incomplete} solvera UWrMaxSAT. Przedstawiam wnioski z eksperymentów i opis, jak można uruchamiać testy z tym solverem. 
+
+\chapter{Preliminaria}
+\section{Definicja problemu MaxSAT}
+Wszystko zaczyna się od zmiennej boolowskiej $x$. Literał $l$ to zmienna lub jej negacja ($x$ lub $\neg x$) i nazywa się odpowiednio pozytywnym lub negatywnym. Klauzula to alternatywa literałów ($l_1 \lor l_2 \cdots \lor l_n$). Formuła $F$ w CNF to~koniukcja klauzul.
+
+Niech zbiór zmiennych w formule $F$ będzie oznaczony jako $vars(F)$.
+Wartościowanie zmiennych $T$ to funkcja mapująca zmienną w $0$ lub $1$:
+$vars(F) \rightarrow \{0, 1\}$. Klauzula $C$ jest spełniona przez $T$, czyli $T(C) = 1$, jeśli istnieje pozytywny literał $l_+ \in C$, dla którego $T(l_+) = 1$ lub negatywny literał $l_- \in C$, dla którego $T(l_-) = 0$. W~przeciwnym wypadku klauzula nie jest spełniona, więc $T(C) = 0$.
+
+Formuła $F$ jest spełniona przez $T$ wtedy i tylko wtedy, gdy wszystkie klauzule $C \in F$ są spełnione przez $T$. Problem SAT pyta, czy dana formuła jest spełnialna, tzn. istnieje takie wartościowanie $T$, że $F$ jest spełniona przez $T$.
+
+MaxSAT dostaje formułę w postaci WCNF (\textit{Weighted CNF}), tzn. zbioru klauzul z przypisanymi wagami $F = \{(C_1, w_1), (C_2, w_2), \dots, (C_n, w_n)\}$ i wymaga znalezienia wartościowania zmiennych zawartych w klauzulach $C_i$ w taki sposób, aby~zminimalizować sumę wag klauzul niespełnionych w~$F$:
+$$cost(T) = \sum_{i = 1}^n w_i\cdot(1 - T(C_i)).$$
+
+Podstawowa wersja MaxSAT, w której nie ma wag (\textit{unweighted}) odpowiada formule z wagami równymi $1$ dla wszystkich klauzul.
+
+W literaturze rozdzielenie klauzul priorytetowych w wersji \textit{partial} oznaczane jest jako podział klauzul na dwie grupy: \textit{hard} i \textit{soft} odpowiednio jako klauzule, które bezwględnie muszą być spełnione i te pozostałe, których spełnienie zmniejsza nam koszt rozwiązania. Zapis tej wersji problemu w postaci WCNF polega na dodaniu wagi $top = \infty$, którą otrzymują wszystkie klauzule z grupy \textit{hard}. \\
+Wystarczy, aby wartość $top$ była równa sumie wag klauzul ze zbioru \textit{soft} powiększonej o $1$, aby 
+zapewnić, że dowolny algorytm rozwiązujący problem MaxSAT będzie priorytetowo spełniał klauzule ze zbioru \textit{hard} nad dowolnym podzbiorem pozostałych klauzul ze zbioru \textit{soft}. Wtedy akceptujemy wartościowania jako poprawne rozwiązania, jeśli ich koszt jest mniejszy niż wartość $top$, a więc wszystkie klauzule $hard$ są~na pewno spełnione.
+
+Postać WCNF do $2021$ roku wymagała, aby na początku podać wartość $top$, dzięki czemu można łatwo rozdzielić klauzule \textit{hard}. Od $2022$ roku wykorzystywany jest nowy format, w którym klauzule \textit{hard} oznaczane są dodatkową literą $h$ w wierszu z ich charakterystyką.
+
+\section{Konkurs MaxSAT Evaluation}
+\textit{MaxSAT Evaluation} \cite{maxsateval} to coroczny konkurs, który powstał przy konferencji \textit{International Conference on Theory and Applications of Satisfiability Testing}, gdzie rywalizują ze sobą najnowsze solvery rozwiązujące problem MaxSAT. Co roku powstają też nowe i coraz większe testy kodujące różne problemy NP-zupełne, na~których solvery są porównywane.
+
+Konkurs rozróżnia 2 kategorie, z czego każda dzieli się na instancje z wagami, w szczególności z wyróżnieniem klauzul \textit{hard} (\textit{weighted partial}) oraz bez wag (\textit{unweighted}). Różne charakterystyki tych kategorii wymagają różnego podejścia do ich rozwiązywania.
+
+W kategorii \textit{complete} biorą udział solvery zupełne, które szukają rozwiązań optymalnych. Stopniowo przybliżają do siebie znalezione ograniczenia dolne i~górne dla~danej instancji problemu aż będą one sobie równe i wtedy zwracają wartościowanie o~minimalnym koszcie. Pierwszym podejściem do rozwiązywania MaxSAT-a był \textit{branch-and-bound}, następnie rozwijane były przede wszystkim algorytmy \textit{SAT-based}, za to ostatnim dosyć nowym podejściem jest całkowitoliczbowe programowanie liniowe (\textit{ILP}), które od niedawna staje się również bardzo konkurencyjne. Ta kategoria to pełne rozwiązywanie problemu optymalizacyjnego \textit{MaxSAT}. Wynik solvera to liczba rozwiązanych instancji w czasie $60$ minut. 
+
+Kategoria \textit{incomplete} jest dla solverów niezupełnych, które 
+mają bardzo ograniczony czas (odpowiednio $1$ min lub $5$ min jako oddzielne podkategorie), aby znaleźć wartościowanie zmiennych o jak najmniejszym koszcie. Nie musi to być rozwiązanie optymalne, ale musi spełniać wszystkie klauzule \textit{hard}, jeśli takie istnieją. Wynik solvera to średnia stosunków między najlepszym znanym rozwiązaniem danej instancji, a~znalezionym rozwiązaniem przez dany solver:
+\begin{equation}
+\frac{1}{|IT|}\cdot\sum_{I \in IT_+} \frac{\textnormal{(koszt najlepszego znanego rozwiązania dla $I$)} + 1}{\textnormal{(koszt rozwiązania znalezionego przez solver dla $I$)} + 1},
+\label{scoreeval}
+\end{equation}
+gdzie $IT$ to instancje testowe w kategorii \textit{incomplete}, $IT_+ \subseteq IT$ to instancje dla~których solver znalazł jakieś rozwiązanie. Wynik solvera dla pozostałych instancji to~$0$.
+
+\section{UWrMaxSAT}
+UWrMaxSAT \cite{uwrmaxsat} to solver zupełny zbudowany w Instytucie Informatyki Uniwersytetu Wrocławskiego i rozwijany przez pana dr. hab. Marka Piotrowa, który rozwiązuje instancje problemu MaxSAT z wagami, a~także instancje optymalizacji funkcji pseudo-Boolowskich \cite{pb} (\textit{pseudo-Boolean problems}), które są innym rozszerzeniem SAT-a.
+
+\noindent UWrMaxSAT startuje w \textit{MaxSAT Evaluation} od 2019 roku i regularnie staje na~podium w kategorii solverów zupełnych. W 2020 roku solver wygrał w najbardziej złożonej podkategorii - \textit{weighted partial}.
+
+Program jako główną strategię stosuje \textit{core-guided search} na bazie procedury \textit{OLL} \cite{oll}, które opiszę później. Dodatkowo korzysta z~wielu heurystyk \cite{stratification}, w tym stratyfikacji klauzul, minimalizacji znalezionego jądra niespełnionych klauzul lub~zamiany klauzul \textit{soft} na \textit{hard}, gdy ich koszt jest większy od~znalezionego najlepszego rozwiązania.
+
+Solver może być uruchamiany w trybie \textit{incomplete}, ponieważ zwraca najlepsze dotychczasowe znalezione rozwiązanie w momencie przerwania programu, jednak ta~metoda jest za wolna, aby konkurować z solverami, które specjalizują się w~szybkim znajdowaniu dobrych rozwiązań.
+Dlatego przydałby się oddzielny algorytm dla~UWrMaxSAT-a do działania w drugim trybie.
+\chapter{Sposoby rozwiązywania MaxSAT-a}
+MaxSAT jest NP-trudnym wariantem problemu SAT, dlatego wymaga algorytmów heurystycznych oraz wielu technik przyspieszających, aby można było rozwiązywać coraz większe instancje problemu.
+Sposób jego rozwiązania zależy w dużej mierze od tego, czy szukamy optimum, czy~wystarczy nam dobre rozwiązanie aproksymacyjne problemu (które przypuszczalnie dostaniemy w znacznie krótszym czasie). \\
+Dodatkowo różne solvery powstają pod konkretne warianty MaxSAT-a: bez wag, z~wagami, Max-2-SAT (gdzie wszystkie klauzule mają co najwyżej dwa literały) lub inne. Najbardziej uogólnionym wariantem jest ten częściowy z~wagami (\textit{Weighted Partial MaxSAT}), jest też kategorią konkursu \textit{MaxSAT Evaluation} i na nim się skupiam.
+
+Pierwsze algorytmy dla MaxSAT-a powstały w latach 90. XX wieku. Były to zarówno algorytmy aproksymacyjne, jak Weighted-Walksat \cite{walksat}, jak i programy szukające rozwiązań optymalnych \cite{twophase}.
+
+\subsubsection{Algorytmy szukające rozwiązań optymalnych}
+Pierwszą metodą do znalezienia optymalnego rozwiązania dla MaxSAT-a były algorytmy \textit{\textbf{branch and bound}} \cite{twophase}\cite{bab}, gdzie w kolejnych krokach ustala się wartościowanie kolejnej zmiennej i koszt dotychczasowego częściowego wartościowania porównuje się z najlepszym już znalezionym rozwiązaniem. Jeśli koszt dowolnego rozwiązania w eksplorowanej ścieżce na pewno przekroczy koszt tego najlepszego, to trzeba cofnąć ostatni krok i wywołać się rekurencyjnie.
+
+Już przy pierwszych algorytmach dodatkowo stosowany był \textit{local search}, aby szybko znaleźć dobre rozwiązanie aproksymacyjne i użyć je jako pierwsze górne ograniczenie wyniku.
+
+W 2006 roku zaprezentowana została praca z algorytmem Fu\&Malik \cite{fumalik}, w~której po raz pierwszy wykorzystano podejście \textit{\textbf{SAT based}}, gdzie wielokrotnie zadaje się zapytanie oddzielnemu SAT solverowi o spełnialność pewnego podzbioru klauzul. To podejście okazało się dużo skuteczniejsze niż \textit{branch and bound} (w szczególności na testach nielosowych, przemysłowych, jako instancja jakiegoś innego problemu optymalizacyjnego) i ciągle jest używane w wielu wariantach i ciągłych ulepszeniach.
+
+\section{Algorytmy SAT-based}
+Główna zasada wykorzystania SAT solvera polega na wielokrotnym wysyłaniu zapytań, czy dany podzbiór klauzul jest spełnialny, czy nie. Jeśli odpowiedź jest pozytywna, SAT solver zwraca model rozwiązania spełniający ten zbiór klauzul. W~przeciwnym wypadku solver zwraca podzbiór klauzul (\textit{core}), które są zależnie sprzeczne, niemożliwe do spełnienia wszystkie naraz.
+
+Taki interfejs jako pierwszy stworzył SAT solver \textit{Minisat} i na nim bazuje wiele SAT solverów, m.in. {Glucose 4.1}. Natomiast na nim opiera się wiele MaxSAT solverów, w tym \textit{Open-WBO-Inc} \cite{openwbo}, który jest częścią kilku najlepszych solverów hybrydowych z ostatnich lat. 
+Poniżej przedstawiam dwa główne podejścia \textit{SAT-based}.
+
+\subsection{Liniowe przeszukiwanie}
+\paragraph{Zmienne relaksacyjne}
+Aby operować na zapytaniach do SAT solvera przydaje się transformacja formuły 
+(\textit{The Blocking Variable Transformation \cite{chapter24}}), w której dokładamy świeże zmienne do klauzul: 
+\begin{enumerate}
+	\item Podzielmy zbiór klauzul $F = F_s \cup F_h$ na klauzule \textit{soft} z wagami i \textit{hard} z~wagą maksymalną $top$. Niech $F'_s$ i $F'_h$ oznaczają nowe zbiory klauzul \textit{soft} i~\textit{hard} po~transformacji, początkowo puste.
+	\item Każda klauzula \textit{soft} $(C_i, w_i) \in F_s$ dostaje świeżą zmienną relaksacyjną $r_i$ i~zamienia się w klauzulę \textit{hard} z wagą \textit{top}: $F'_h = F'_h \cup {(C_i \cup \neg r_i, top)}$.
+	\item Dla każdej nowej zmiennej relaksacyjnej $r_i$ powstaje nowa klauzula \textit{soft} o wadze $w_i$: $F'_s = F'_s \cup (\{r_i\}, w_i)$.
+	\item Wszystkie klauzule \textit{hard} zostają dalej \textit{hard}: $F'_h = F'_h \cup F_h$. Nowa formuła $F' = F'_s \cup F'_h$ zawiera wszystkie klauzule \textit{hard} i klauzule \textit{soft} z dodatkowymi zmiennym relaksacyjnymi.
+\end{enumerate}
+Dzięki takiemu zapisowi formuły wszystkie oryginalne klauzule są traktowane jako \textit{hard} - dokładnie tak, jak w problemie SAT. Jeśli w danym modelu któraś klauzula jest niespełniona, to jej zmienna relaksacyjna zostaje zwartościowana negatywnie i~koszt rozwiązania wzrasta o wagę tej klauzuli dzięki odpowiadającej jej nowej klauzuli \textit{soft}.
+\textbf{Klauzulą zrelaksowaną} nazwiemy klauzulę \textit{soft}, której oryginalna postać w~danym modelu jest niespełniona. Jest to równoważne ze zwartościowaniem jej zmiennej relaksacyjnej negatywnie.
+
+Wykorzystując zmienne relaksacyjne rozszerzmy formułę o dodatkowe ograniczenie sumy wag klauzul zrelaksowanych. 
+Niech $$F_k = F' \cup CNF({\sum_{i = 1}^{m} w_i \cdot r_i} \le k),$$ gdzie $F'$ to formuła wejściowa po transformacji ze zmiennymi relaksacyjnymi $r_i$ dla~$m$~klauzul \textit{soft}. 
+Powyższe ograniczenie dla sumy wag jest ograniczeniem pseudo-boolowskim, dla którego jest wiele sposobów zakodowania go do postaci CNF \cite{encodings} i~możemy to wykorzystać.
+
+Istnieją też inne techniki relaksacji klauzul, np. z dokładaniem wielu klauzul relaksacyjnych do jednej zmiennej w trakcie trwania algorytmu (jak w Fu\&Malik \cite{fumalik}), ale~są one zazwyczaj bardziej kosztowne - czasowo i pamięciowo.
+
+
+\textbf{Liniowe przeszukiwanie (\textit{linear/model-improving search})} polega na wielokrotnym wysyłaniu zapytań do SAT solvera o różne ograniczenia kosztu rozwiązania. Można wyróżnić dwa podejścia dochodzące do rozwiązania z różnych stron:
+\begin{itemize}
+	\item \textbf{SAT-UNSAT}, które ustanawia ograniczenie kosztu rozwiązania $k$ równe sumie wag wszystkich klauzul \textit{soft}, dostaje od SAT solvera dowolne rozwiązanie o koszcie $s \le k$, zmniejsza $k$ do $s - 1$ i~powtarza te kroki tak długo, jak formuła $F_k$ jest spełnialna. Gdy SAT solver zwróci informację, że formuła jest niespełnialna dla danego $k$, to znaczy, że optymalne rozwiązanie wynosi $k + 1$ i ostatni zwrócony przez solver model jest tym rozwiązaniem: wszystkie wcześniejsze rozwiązania są górnymi ograniczeniami wyniku i mogą być użyteczne dla solvera niezupełnego;
+	\item \textbf{UNSAT-SAT}, które zaczyna od $k = 0$ i stopniowo zwiększa $k$. Gdy SAT solver po raz pierwszy odpowie, że formuła $F_k$ jest spełnialna, to wynik wynosi $k$ i zwrócony model rozwiązania posiada optymalne wartościowanie.
+\end{itemize}
+Powyższą metodę można zastosować też z przeszukiwaniem binarnym lub w jeszcze inny sposób zmniejszając górne i dolne ograniczenie wyniku.
+
+W konkursie \textit{MaxSAT Evaluation 2021} metoda przeszukiwania liniowego została wykorzystana przez solver niezupełny \textit{Loandra} \cite{coreboosted} jako jedna ze składowych programu oraz przez  \textit{Open-WBO-Inc} z wcześniejszych lat.
+
+\subsection{Core-guided search}
+\paragraph{Assumptions \cite{chapter24}} to dodatkowe założenia dla SAT solvera, w których ręcznie ustalamy wartościowanie wybranych zmiennych. Możemy w nich dodać informację z~preprocessing-u lub założenia, dla których chcemy sprawdzić, czy z nimi nasza formuła będzie spełnialna. Dzięki zmiennym relaksacyjnym i \textit{assumptions} możemy wielokrotnie korzystać z jednej instancji SAT solvera do wielu zapytań - raz wstawiamy do niego wszystkie klauzule \textit{hard} (już po relaksacji klauzul \textit{soft}) i~w~kolejnych wywołaniach nie dokładamy nowych klauzul, ale operujemy na zmiennych relaksacyjnych. 
+
+W ten sposób możemy np. wstępnie ustalać, które klauzule \textit{soft} wolelibyśmy, żeby nie były zrelaksowane lub stopniowo pozwalać coraz większemu podzbiorowi klauzul na relaksację i sprawdzać czy pozostałe klauzule mogą już być spełnione.
+Aby uzyskać takie informacje bez \textit{assumptions}, uruchamianie SAT solvera dla MaxSAT-a polegałoby na dodaniu pewnego podzbioru klauzul do SAT-a, sprawdzaniu, czy jest spełnialny, wyczyszczeniu całej instancji i~w~zależności od odpowiedzi ustalaniu nowego podzbioru klauzul do sprawdzenia i dodaniu go całego od nowa, ponieważ z~	solvera nie można usuwać pojedynczej klauzuli.
+
+Wielokrotne wywoływanie SAT solvera na jednej instancji ma dużą zaletę - kolejne odwołania do SAT-a pozwalają mu wykorzystać wiedzę z~poprzednich przeszukiwań i są dużo szybsze.
+
+\textit{\textbf{Core-guided search}} to podejście, w którym również zadaje się wielokrotne zapytania do SAT solvera o formułę ze zmiennymi relaksacyjnymi i działa w trybie UNSAT-SAT. Program zaczyna od ustawienia, gdzie żadna klauzula nie jest zrelaksowana (do \textit{assumptions} wstawia wszystkie zmienne relaksacyjne zwartościowane pozytywnie) i dopóki solver zwraca informację, że formuła jest niespełniona, program analizuje zwrócony również \textit{core} zmiennych z \textit{assumptions}, których wartościowanie uniemożliwia spełnienie całej formuły. Następnie zbiór zmiennych w~\textit{assumptions} jest modyfikowany, np. poprzez dodanie ograniczenia \textit{AtMostOne}, że dokładnie jedna zmienna ze znalezionego \textit{core} może być zrelaksowana i procedura jest powtarzana aż formuła będzie spełnialna (strategia \textit{OLL} \cite{oll}).
+
+To podejście zostało wprowadzone w 2006 przez Fu \& Malik \cite{fumalik} i od tego czasu powstało wiele nowych algorytmów go wykorzystujących. Większość z nich bazuje na dwóch strategiach: \textit{OLL} i \textit{PMRES} \cite{pmres} w połączeniu z wieloma dodatkowymi heurystykami. Pierwszym rozszerzeniem algorytmu Fu \& Malik na instancje ważone był \textit{WPM1} \cite{wpm1}, który z czasem ewaluował do \textit{WPM3}.
+Strategię \textit{OLL} stosuje większość solverów zupełnych z ostatniej edycji konkursu\cite{maxsateval}: UWrMaxSAT, \textit{Exact}, \textit{Open-WBO}.
+
+Podstawowy \textit{core-guided search} w~czasie swojego działania nie znajduje rozwiązań innych niż optymalne (które mogłyby być wykorzystane jako rozwiązania aproksymacyjne), ale w połączeniu z modyfikacjami algorytm może polegać na wywoływaniu zapytań do SAT solvera na różnych podzbiorach klauzul i w zależności od wyniku zmieniać górne lub dolne ograniczenie wyniku. 
+
+Solver \textit{WPM-3-in \cite{wpm3-in}} z 2015, który tak właśnie działa, przez kilka lat był na~podium solverów niezupełnych. 
+\textit{Loandra} z 2021 roku \cite{coreboosted}, która była najlepsza w~kategorii $300s$, też wykorzystała \textit{core-guided search} jako jedną ze składowych swojego programu.
+
+\textbf{Stratyfikacja \cite{stratification}} to jedna z metod stosowanych często przy \textit{core-guided search}. Polega ona na tym, że dzielimy zbiór klauzul \textit{soft} względem wag i szukamy rozwiązania najpierw tylko dla podzbioru o największych wagach. W ten sposób szybko zwiększamy dolne ograniczenie rozwiązania oraz priorytetyzujemy spełnialność jak największej liczby tych klauzul o wysokich wagach. Potem stopniowo dodajemy kolejne klauzule.
+
+\subsubsection{Algorytmy heurystyczne}
+Solvery niezupełne starają się przede wszystkim szybko znaleźć pierwsze dobre rozwiązanie, a następnie poprawiać je różnymi metodami, np. \textit{local search}. Często korzystają też z różnych strategii aproksymacyjnych, aby uprościć proces przeszukiwania przestrzeni rozwiązań lub metod opisanych powyżej, które docelowo znajdują optimum, ale uruchomione na jakiś czas mogą pomóc znaleźć dobre rozwiązania aproksymacyjne.
+Ostatnie wyniki konkursu \textit{MaxSAT Evaluation} pokazały, że podejścia łączące \textit{stochastic local search} razem z iteracyjnym wywoływaniem SAT solvera osiągają najlepsze wyniki.
+
+\section{Algorytmy local search}
+Niektóre algorytmy nie korzystają z wyżej opisanych zmiennych relaksacyjnych. Przeszukiwanie lokalne (\textit{local search}) zaczyna od losowego wartościowania zmiennych z formuły wejściowej i~sprawdza sąsiedztwo tego modelu poprzez wielokrotną zamianę (\textit{flip}) wartościowania jednej zmiennej w kolejnych krokach.
+
+Tutaj również istotne jest rozróżnienie klauzul \textit{hard} od \textit{soft}, samo nadanie ścisłego priorytetu klauzulom \textit{hard} poprzez wagę \textit{top} nie wystarcza. W~szczególności na~testach nielosowych przez długi czas \textit{local search} był znacząco gorszy od algorytmów \textit{SAT based}. Ale od 2014 roku nowe algorytmy zaczęły stosować technikę rozdzielania kosztu modelu na dwie części - jednej zależnej od~wag klauzul \textit{soft}, a~drugiej od liczby spełnionych klauzul \textit{hard} i stosować różne heurystyki w~zależności od obu parametrów.
+
+Poniżej skrótowo przedstawiam charakterystykę kilku takich algorytmów \textit{local search} użytych przez solvery niezupełne z konkursu \textit{MaxSAT Evaluation} z podziałem na kolejne lata od 2014 roku. To przede wszystkim te algorytmy postaram się połączyć z UWrMaxSAT-em, który jest już solverem \textit{SAT-based} i działa metodą \textit{core-guided}.
+
+\paragraph{Dist 2014 \cite{dist}} - najlepszy solver \textit{local search} z 2014 roku na testach \textit{Weighted Partial MaxSAT}, który wygrał w kategorii testów losowych i testów generowanych na podstawie przygotowanych modeli rozwiązań (\textit{crafted}). Został pokonany przez \textit{core-guided} solvery na testach przemysłowych (\textit{industrial}). Poniżej przedstawiam jego zarys:
+\begin{itemize}
+	\item Klauzule \textit{soft} mają swoje oryginalne wagi przez cały czas działania algorytmu. Klauzule \textit{hard} początkowo dostają wagę $1$. 
+	\item Algorytm zaczyna od losowego wartościowania zmiennych z formuły $F$. Każda zmienna $x$ ma wyliczone parametry $hscore(x)$ i $sscore(x)$, które oznaczają o~ile wzrośnie suma wag spełnionych klauzul \textit{hard} (odp. \textit{soft}), jeśli zamienione zostanie wartościowanie tej zmiennej w dotychczasowym modelu.
+	\item Algorytm w kolejnych krokach poprawia koszt rozwiązania poprzez wybór i~zamianę losowej zmiennej z $hscore(x) > 0$ lub $hscore(x) = 0 \and sscore(x) > 0$, a~jeśli dojdzie do lokalnego minimum, to modyfikuje wagi klauzul \textit{hard} i~wybiera zmienną z losowej klauzuli niespełnionej \textit{hard} lub \textit{soft} o największym $sscore(x)$.	
+	\item Pseudokod algorytmu znajduje się w \ref{dist-code}. Podstawowa wersja \textit{Dist} rozwiązuje problem \textit{PMS - Partial MaxSAT} bez wag i stąd ostatni warunek w pseudokodzie, czy rozwiązanie jest spełnialne, opiera się na liczbie klauzul \textit{soft}, a nie ich wagach.
+	
+\end{itemize}
+\textit{HSGreedy} solver to modyfikacja \textit{Dist} z 2016 roku, która zmienia zasadę według której wybierana jest zmienna w drugim kroku. Jednak nie okazała się ona lepsza niż algorytm \textit{Dist}.
+
+\noindent \textit{DistUP} \label{alg:distup} to solver, który na początku wykonuje procedurę \textit{unit propagation} \cite{maxpre}, jest to podstawowa metoda preprocessingu w SAT solverach (i MaxSAT solverach też), która polega na wartościowaniu zmiennych z jednoelementowych klauzul \textit{hard} - oryginalnych i tych, które powstaną po wartościowaniu kolejnych zmiennych. \\ I~rzeczywiście poprawia ona działanie programu \textit{Dist} w~szczególności na testach przemysłowych, dla których wykazano, że liczba klauzul jednoelementowych jest znacząca \cite{unitcls}. 
+
+\paragraph{CCEHC 2015 \cite{ccehc}} - solver, który od 2015 przez kilka lat pojawiał się na podium dla~solverów niezupełnych. Zbudowany na bazie \textit{CCLS} z 2013 roku, który jeszcze nie rozdzielał klauzul \textit{hard} w swoim algorytmie tylko traktował je jako klauzule o~wadze \textit{top}. \textit{CCEHC} był zbudowany głównie pod problem \textit{Weighted Partial MaxSAT} w~przeciwieństwie do poprzednich algorytmów.
+Jego kolejne kroki to:
+\begin{itemize}
+	\item Algorytm zaczyna od losowego wartościowania zmiennych z formuły $F$. Każda zmienna $x$ ma wyliczone parametry $hscore(x)$ i $sscore(x)$ jak w \textit{Dist} oraz~początkowe $hardConf(x) = 1$ jak w \textit{CCLS}, które oznacza, czy od ostatniej zamiany $x$ spełnialność którejś klauzuli \textit{hard} z jej sąsiedztwa (w której występuje) zmienia się. 
+	\item Z pewnym prawdopodobieństwem algorytm wykonuje błądzenie losowe jak w~\textit{CCLS}, w którym uwzględnia wielkości $sscore$ zmiennych.
+	\item Wpp. algorytm wybiera zmienną ze zbioru \textit{HCSCCD}, czyli taką że $hscore(x) > 0$ oraz $hardConf(x) = 1$. Prawdopodobieństwo wzięcia zmiennej ze zbioru zależy od wielkości $hscore$.
+	\item Jeśli jednak zbiór \textit{HCSCCD} jest pusty, algorytm wykonuje aktualizację wag klauzul \textit{hard} jak w \textit{Dist} i wybiera zmienną ze zbioru \textit{CCMP}. 
+	Zmienna należy do \textit{CCMP}, gdy jej $hardConf(x) = 1$ oraz $make(x) > 0$, gdzie $make$ jest funkcją zysku względem klauzul \textit{hard} oraz~\textit{soft} razem. Jest to działanie analogiczne do~kroku wcześniejszego, ale~bazujące na parametrach z~\textit{CCLS}.  
+	\item Jeśli \textit{CCMP} też jest pusty, program wybiera zmienną z losowej klauzuli niespełnionej z~priorytetem dla klauzul \textit{hard} i powtarza powyższe kroki do czasu zatrzymania algorytmu.
+	\item Pseudokod kodu znajduje się w \ref{ccehc-code} .
+\end{itemize}
+Dodatkowo powstał algorytm hybrydowy \textit{CCEHC} i \textit{DistUP} z inicjalizacją programu przez \textit{unit propagation}, który, podobnie jak w przypadku \textit{Dist}, poprawił wyniki.
+
+\paragraph{2016-2017} W kolejnych latach konkursu wygrywały przede wszystkim solvery zupełne z drobnymi modyfikacjami lub \textit{local search-em} uruchamianym na początku, aby znaleźć szybko dobre ograniczenie górne rozwiązania. Od 2017 roku nie ma też testów losowych, na których solvery \textit{local search} radziły sobie najlepiej.
+
+Ale w 2018 roku pojawiły się nowe rozwiązania, które łącząc wiele znanych wcześniej metod potrafiły znacząco przewyższyć wynikiem solvery zupełne. 
+
+\paragraph{SATLike 2018 \cite{satlike}} - solver, który zaczął od \textit{dynamic local search}, dołożył algorytm zachłanny do znajdowania dobrego pierwszego wartościowania, a następnie połączył się z solverem \textit{SAT-based} i do dzisiaj, w różnych modyfikacjach, cały czas okazuje się najlepszy. Poniżej przedstawiam jego charakterystykę:
+
+\begin{enumerate}
+	\item Najpierw \textit{UP-based decimation algorithm} ustawia początkowe wartościowanie wszystkich zmiennych. Algorytm wykonuje \textit{unit propagation (up)} na klauzulach jednoelementowych z priorytetem dla klauzul \textit{hard}. W przypadku dwóch sprzecznych klauzul decyduje o wartości zmiennej tak, aby zmaksymalizować wagę spełnionych klauzul \textit{soft}. Gdy nie może zrobić kroku \textit{up}, algorytm wybiera losową zmienną i wartościuje ją tak, aby spełnić jak najwięcej klauzul \textit{soft}. Następnie sprawdza, czy dzięki temu wartościowaniu któraś klauzula stała się klauzulą jednoelementową i jeśli tak, to znowu próbuje wykonać krok \textit{up}, wpp. przechodzi do wartościowania kolejnej losowej zmiennej. \\
+	Strategia \textbf{decymacji}, czyli w tym przypadku zmniejszania problemu poprzez stopniowe wartościowanie zmiennych i upraszczanie formuły, pojawiła się dla MaxSAT-a w 2017 roku \cite{decimation}. 
+	
+	\item Autorzy stosują nowy schemat klasyfikacji klauzul (\textit{Weighthing-PMS}). Początkowo klauzule \textit{hard} mają wagi $1$, a \textit{soft} zostają przy oryginalnych wagach. W~trakcie działania algorytmu wagi klauzul będą się zmieniać dynamicznie - klauzule niespełnione będą dostawać wyższe wagi, a te spełnione niższe, aby móc wyjść z \textit{local minimum}. 
+	
+	Zmienne mają przypisane punktacje (\textit{score}), które oznaczają sumaryczną zmianę wag spełnionych klauzul po zamianie danej zmiennej. 
+	W kolejnych krokach zachłannie poprawiamy wynik poprzez zamianę zmiennej o najwyższej dodatniej punktacji. Gdy dojdziemy do lokalnego minimum, gdzie zamiana jednej zmiennej nie poprawia już wyniku, wagi klauzul \textit{soft} i \textit{hard} zmieniają się z pewnym prawdopodobieństwem według odpowiednich reguł. Następnie  aktualizujemy wszystkie punktacje zmiennych i dalej poprawiamy rozwiązanie.
+	
+	Aby zmniejszyć liczbę dojść do lokalnych minimum, algorytm wybiera zmienną o najwyższej punktacji z $15$ losowo wybranych zmiennych. Jest to metoda \textbf{BMS} - \textit{Best from Multiple Selections}. 
+	\item Połączenie rozwiązania znalezionego w krokach $1$ i $2$ z \textit{SAT-based} solverem, np. \textit{Open-WBO} lub \textit{LinSPBS}. Ograniczenie działania kroku $2.$ do czasu, gdy~przez $10^7$ kroków nie uda się poprawić rozwiązania.
+\end{enumerate}
+
+Dodatkowo autorzy SATLike zwrócili uwagę na to, że dla niektórych testów ich \textit{local search} nie znajduje żadnego rozwiązania i wynika to z charakterystyki problemu z klauzulami priorytetowymi (\textit{hard}). Zauważyli, że brak rozwiązania pojawia się zazwyczaj wtedy, gdy klauzule \textit{soft} mają przypisane bardzo wysokie wagi w danym teście. Wtedy stają się dużo bardziej priorytetowe niż \textit{hard} (które początkowo dostają wagi $1$). Aby temu zaradzić, autorzy w pierwszym przeszukiwaniu ustalają wagi klauzul \textit{soft} na $0$, czyli szukają pierwszego rozwiązania który spełnia wszystkie klauzule \textit{hard} i w ogóle nie rozpatruje pozostałych klauzul.
+
+Pseudokod głównej części SATLike - \textit{(kroku 2.) dynamic local search} - bez modyfikacji i połączeń z innymi algorytmami, znajduje się w \ref{satlike-code}. To rozwiązanie z nową strukturą dynamicznego ustawiania wag klauzul \textit{hard} i \textit{soft} w połączeniu z solverami \textit{SAT-based} osiągneło rekordowe rezultaty.
+
+\section{Algorytmy hybrydowe}
+Pierwszy algorytm hybrydowy pojawił się już w 1997 roku, ale to teraz, od~SATLike z 2018 roku, znowu algorytmy łączące ze sobą podejście \textit{local search} i \textit{SAT-based} osiągają najwyższe wyniki w kategorii \textit{incomplete} i pokonują wszystkie inne solvery. Poniżej przedstawiam te ostatnie, najnowsze solvery hybrydowe i techniki, których używają.
+
+\paragraph{maxroster 2017 \cite{maxroster}} - to połączenie dwóch gotowych algorytmów z~wcześniejszych edycji konkursu. Najpierw $6s$ działa \textit{Ramp} - solver \textit{local-search}, a~następnie uruchamiany jest solver zupełny \textit{MapleSAT}. Ten program zajął pierwsze miejsce w~kategorii ważonej w~2017 roku w obu podkategoriach czasowych, był też na podium w 2018, ale potem już się nie pojawiał.
+
+\paragraph{Open-WBO-Inc 2018 \cite{openwbo}} - to wersja \textit{incomplete} jednego z najlepszych solverów zupełnych z lat 2014 - 2017. W kategorii ważonej implementacja \textit{Open-WBO} opiera się na 
+strategii \textit{OLL} \cite{oll}. Wiele solverów bazuje na nim do dziś dzięki jego przejrzystości i modularności.\\
+W 2018 roku powstał solver \textit{Open-WBO-Inc}, który wykorzystuje kilka nowych strategii aproksymacyjnych do znalezienia dobrych rozwiązań w krótkim czasie, a dopiero potem przechodzi do szukania rozwiązania optymalnego. Te metody to:
+
+\begin{enumerate}
+	\item \textbf{Klasteryzacja} polega na podziale klauzul na grupy tak, aby klauzule o podobnych wagach były w jednym klastrze. Następnie, aby ułatwić działanie algorytmów, wagi klauzul w jednym klastrze należy ujednolicić do jednej wspólnej wagi, np. średniej arytmetycznej wszystkich wag. Znalezione optymalne rozwiązanie dla takiego układu klauzul to dobre górne ograniczenie dla rzeczywistego zbioru. \\ 
+	Podział klauzul odbywa się na posortowanym względem wag zbiorze w miejscach o największej różnicy między kolejnymi elementami. \\
+	
+	\textit{Open-WBO-Inc-Cluster} dzieli klauzule na $2$ klastry, przyznaje im wagi równe średniej arytmetycznej wag wszystkich klauzul w klastrze i przeprowadza algorytm  liniowego przeszukiwania \textit{SAT-UNSAT}. \\
+	
+	\item \textbf{Podział problemu na podproblemy} to pewna forma stratyfikacji. Klauzule są najpierw podzielone na klastry, a następnie kolejne klastry są przetwarzane zachłannie w kolejności malejących wag. Ponownie każdy etap algorytmu polega na liniowym zmniejszaniu górnego ograniczenia rozwiązania dla danego podzbioru klastrów. Gdy przeszukiwanie zostanie skończone, do formuły dodawane jest to najmniejsze znalezione ograniczenie liczby niespełnionych klauzul dla danego klastra i do~zbioru klauzul dokładany jest kolejny klaster.
+	
+%	Własność \textbf{BMO} (\textit{bounded multilevel optimization}) mówi, że powyższy zachłanny algorytm jest optymalny, jeśli dla dowolnego klastra waga każdej z~jego klauzul jest większa od sumy wag wszystkich klauzul z~klastrów o wagach mniejszych od niego. Wynika to z tego, że nasz każdy krok algorytmu jest wtedy optymalny, zawsze optymalizacja następnego największego klastra da lepszy wynik niż jakiekolwiek inne wartościowanie zmiennych, która zwiększa sumę wag spełnionych klauzul w pozostałych klastrach, ale pogarsza sumę wag spełnionych klauzul z tego klastra.
+%	\\
+	
+	\textit{Open-WBO-Inc-BMO} dzieli klauzule tak, aby w każdym klastrze były klauzule o tych samych początkowych wagach.\\
+	
+\end{enumerate}
+
+\paragraph{LinSPBS 2018 \cite{openwbo}} - to kolejny solver, który bazuje na \textit{Open-WBO} i wykorzystuje nowe techniki aproksymacyjne. \textit{LinSPBS} wygrał w 2018 roku w kategorii \textit{incomplete} $300s$. Jego metody to:
+\begin{enumerate}
+	\item \textbf{Varying Resolution Approach} tak jak klasteryzacja ma na celu stopniowe dokładanie klauzul o coraz mniejszych wagach do formuły zapytania. Początkowo algorytm dzieli wagi klauzul przez dużą liczbę (przez co wiele klauzul \textit{soft} ma wagę zerową i nie jest uwzględnianych w formule) i szuka rozwiązania optymalnego na zmodyfikowanej formule. Gdy liniowe przeszukiwanie znajdzie rozwiązanie, wagi klauzul są przywracane do oryginalnych wartości, dzielone przez mniejszą liczbę i algorytm ponawia przeszukiwanie. 
+
+	\item \textbf{Solution-Based Phase Saving} modyfikuje sposób budowania rozwiązania przez SAT solver w czasie przeszukiwania liniowego. Normalnie SAT solver wartościuje kolejne zmienne (w pewnej kolejności) tak długo, aż dojdzie do konfliktu wartościowania i formuła przestaje być spełnialna. Wtedy zachodzi \textit{backtracking} czyli cofanie się do momentu, który wywołał konflikt, zwartościowanie danej konfliktowej zmiennej odwrotnie i ponowne wartościowanie kolejnych zmiennych. Aby przyspieszyć ten proces i uniknąć powtarzania tego samego cofania wielokrotnie, można wykorzystać wiedzę sprzed \textit{backtracking-u}. 
+	W tym przypadku oznacza to wartościowanie zmiennych tak, jak w dotychczas znalezionym najlepszym rozwiązaniu. Technicznie polega to na ustawieniu biegunowości zmiennych (\textbf{\textit{polarity selection}}) oryginalnych w naszym solverze za każdym razem, gdy znajdziemy nowe lepsze rozwiązanie formuły.
+\end{enumerate}
+ 
+\paragraph{Loandra 2019 \cite{loandra}} - to solver, który od 2019 roku bardzo konkurował z różnymi modyfikacjami SATLike i \textit{Open-WBO} solverów. W 2021 roku wygrał w konkurencji $300s$. Dzieli się na $3$ etapy:
+\begin{enumerate}
+	\item \textbf{Preprocessing}, który wcześniej składał się głównie z \textit{unit-propagation} oraz preprocessingu stosowanego przez wewnętrzny SAT solver. \textit{Loandra} korzysta dodatkowo z zewnętrznego \textit{MaxPre} \cite{maxpre}, który przeprowadza kilka różnych technik upraszczania formuły w ustalonej kolejności. Dzięki temu kolejne algorytmy mają prostsze dane wejściowe, ale z drugiej strony mają też mniej czasu na działanie. Solver działa $30s$ na tym etapie.
+	\item \textbf{Core-guided search}, który w przeciwieństwie do \textit{Open-WBO} działa przy pomocy algorytmu \textit{PMRES}, jego dodatkowe techniki to: \textit{hardening clauses} i~\textit{weight aware core extraction}. Solver działa $30s$ na tym etapie.
+	\item \textbf{Linear search}, który działa bardzo podobnie jak \textit{LinSPBS} z obydwiema użytymi tam technikami aproksymacyjnymi.
+\end{enumerate}
+Solver przekazuje przekształconą formułę i dotychczasowe ograniczenia rozwiązania między kolejnymi etapami.
+\paragraph{TT-Open-WBO-Inc 2021 \cite{ttopenwbo}} - to najnowszy solver, który od $2020$ jest na podium w obu konkurencjach czasowych dla problemu \textit{incomplete}. Korzysta z SATLike jako algorytmu startowego, a następnie uruchamia nowy algorytm \textit{Polosat}, który łączy znowu kilka różnych technik. \\
+Solvery \textit{SATlike-c} oraz \textit{SATLike-ck} to podobne solvery hybrydowe, ale z ustawionymi inaczej kilkoma parametrami między \textit{POLOSAT-em} i \textit{SATLike-iem}.
+Oryginalny \textit{TT-Open-WBO-Inc} działa następująco:
+
+\begin{enumerate}
+	\item SATLike jest uruchamiany na $15$ sekund.
+	\item Algorytm \textit{Polosat} działa tak długo, jak kolejne iteracje poprawiają wynik:
+	\begin{itemize}
+		\item zaczyna od najlepszego modelu rozwiązania $\mu$ znalezionego w pkt. 1,
+		\item trzyma wektor $B$ zmiennych relaksacyjnych klauzul, które nie są spełnione w $\mu$,
+		\item dla kolejnych klauzul z $B$ sprawdza, czy da się spełnić formułę tak, aby a) ta klauzula też była spełniona i b) wszystkie klauzule o indeksach mniejszych od niej nie zmieniły swojego statusu spełnialności: \\ - jeśli tak, to sprawdza, czy najlepszy wynik jest poprawiony oraz aktualizuje $B$,\\ - wpp. sprawdza, czy da się spełnić formułę tylko z założeniem a) i jeśli tak, to podobnie aktualizuje najlepszy wynik i $B$.
+	\end{itemize}
+	\item Kolejne zapytania do SAT-solvera w algorytmie \textit{Polosat} działają zgodnie z ustawioną biegunowością zmiennych (\textit{polarity selection}) wg zasady \textit{Target-Optimum-Rest-Conservative (TORC)}, gdzie \textit{target} to zmienne relaksacyjne dla wszystkich klauzul \textit{soft}.
+	\item K	lauzule są podzielone wagowo tak jak w \textit{Open-WBO-Inc-BMO} (bo na nim cały program bazuje) i~kolejne klastry są przetwarzane w kolejności malejącej.
+	\item Pseudokod algorytmu \textit{Polosat} znajduje się w \ref{polosat-code} .
+\end{enumerate}
+\chapter{Integracja UWrMaxSAT-a z~nowymi algorytmami}
+Celem tego projektu była analiza algorytmów wykorzystywanych w solverach niezupełnych dla MaxSAT-a, a następnie połączenie \textit{UWrMaxSAT-a} z wybranym efektywnym algorytmem, aby szybko 
+i skutecznie znajdował dobre rozwiązania instancji z kategorii \textit{incomplete}. Poniżej prezentuję kolejne etapy i efekty wykonywania tego zadania.
+
+\section{Metodologia eksperymentów}
+Wszystkie eksperymenty przeprowadzam na komputerach z Instytutu Informatyki Uniwersytetu Wrocławskiego z procesorem Intel(R) Core(TM) i7-2600 @3.40GHz i pamięcią 16GB z~systemem Ubuntu Linux, wersja 16.04.3. 
+
+Różne modyfikacje programu i nowe algorytmy uruchamiam na całym zestawie testów ($151$ instancji) z konkursu \textit{MaxSAT Evaluation 2021} w kategorii \textit{incomplete}. 
+Czas działania każdego testu ustawiony jest odpowiednio na $60s$ i $300s$, aby~porównać działanie programów w obu kategoriach konkursu.
+Limit pamięci to 32 GB.
+
+Działanie programu oceniane jest jako średnią wyników dla wszystkich testów obliczanych według wzoru z rozdziału \ref{scoreeval}, gdzie dla każdej instancji, jeśli solver znalazł jakieś rozwiązanie, to wyliczamy proporcję wyniku najlepszego do tego wyniku, a~wpp. wynik testu to $0$.
+
+\subsection{Najlepsze wyniki z roku 2021}
+Najlepsze zeszłoroczne solvery dla instancji ważonych miały wyniki $0.793$ oraz $0.831$ przy czasie działania odpowiednio $60s$ i $300s$. 
+$3$ najlepsze solvery w podkategorii dla $60s$ to modyfikacje solvera SATLike połączone z algorytmem \textit{SAT-based}.
+Natomiast w kategorii $300s$ wygrał solver \textit{Loandra}, który jest całkowicie solverem \textit{SAT-based}, ale składa się z $2$ dużych odrębnych algorytmów oraz rozbudowanego preprocessingu.
+
+\begin{figure}[h]
+	\includegraphics[width=0.5\textwidth]{wyniki60s}
+	\includegraphics[width=0.5\textwidth]{wyniki300s}
+	\label{wyniki2021}
+	\caption{Wyniki z 2021, \cite{maxsateval}}
+	
+\end{figure}
+
+\section{Uruchomienie samego UWrMaxSAT-a}
+\paragraph{Krok 1}
+UWrMaxSAT działa metodą \textit{core-guided search} ze stratyfikacją \cite{stratification} i~dodatkowymi optymalizacjami. Program korzysta ze zmiennych relaksacyjnych, które są dodane do wszystkich klauzul \textit{soft}, a następnie wykonuje zapytania do SAT solvera przy pomocy \textit{assumptions}. Solver może zwracać rozwiązanie w trybie \textit{incomplete} i~możemy go tak uruchomić (bez flagi \texttt{no-sat})- jeśli program zostanie przerwany, zwraca najlepsze dotychczasowe rozwiązanie z informacją, czy jest ono już optymalne, czy jeszcze nie. 
+
+Na start uruchomiłam oryginalnego UWrMaxSAT-a na testach \textit{incomplete} na~$60s$.
+Solver znalazł rozwiązanie dla $50$ z $151$ instancji ze średnim wynikiem $0.265$ (\ref{eksperymenty}: 1), gdzie $10$ instancji rozwiązał z wynikiem takim samym lub lepszym niż najlepszy z~solverów w $2021$ roku.
+Ten wynik razem z wszystkimi kolejnymi zamieszczam w~grupowej tabeli w~dodatku do pracy \ref{eksperymenty}.
+
+Skoro solver znalazł rozwiązania dla $50/151$, to oznacza, że program nie zdążył znaleźć żadnego rozwiązania dla $67\%$ testów, a pierwsze rozwiązanie 
+jest bardzo istotne w konkursie, ponieważ znalezienie go zmienia wynik dla danej instancji z~0~na~coś dodatniego.
+\paragraph{Krok 2}
+Aby przyspieszyć znalezienie pierwszych rozwiązań, dodałam na początek programu wywołanie zapytanie SAT solvera tylko na klauzulach \textit{hard}. Zwrócone przez SAT solver rozwiązanie jest wtedy poprawnym rozwiązaniem całej formuły, potrzebne jest jeszcze tylko wyliczenie kosztu względem wszystkich klauzul \textit{soft}. 
+
+Tylko to jedno zapytanie do SAT solvera i zakończenie programu zwróciło średni wynik $0.344 (\ref{eksperymenty}: 2a)$ i znalazło pierwsze rozwiązanie już dla $116/151$ testów (które jeszcze w~wielu przypadkach mogłoby być poprawione). Czyli ponad $2$ razy większa liczba testów dostała pozytywny wynik!
+Kontynuowanie domyślnego działania programu po tym pierwszym zapytaniu algorytmem UWrMaxSAT-a daje wynik $0.348 (\ref{eksperymenty}: 2b)$.
+
+Solver SATLike  też wykorzystuje tę strategię i pierwsze przeszukiwanie \textit{local-search} wykonuje tylko na klauzulach \textit{hard}.
+  
+\paragraph{Krok 3}
+UWrMaxSAT działa przy użyciu solvera \textit{COMiniSatPS}, ale jest też przystosowany do działania z kilkoma innymi SAT solverami. Większość solverów niezupełnych korzysta z \textit{Glucose 4.1} i teraz też zamiana SAT solvera na~\textit{Glucose 4.1} okazała się najlepsza i poprawia ostatni ($0.348$) wynik do $0.467 (\ref{eksperymenty}: 3ab)$.
+
+W ten sposób udało nam się zwiększyć średni wynik, ale też liczbę testów ($130/151$), dla których program znalazł rozwiązanie. Jednak ciągle $21/151$ testów daje wynik $0$ i~korzystając tylko z podejścia \textit{SAT-based} nie będziemy w stanie ich już poprawić, co daje nam ograniczenie górne wyniku równe $0.86$. 
+
+Przy $300s$ program otrzymuje wynik $0.543$ i znajduje już jakieś rozwiązanie dla aż $149/151$ testów. To potwierdza, że algorytm UWrMaxSAT-a też dobrze radzi sobie z testami \textit{incomplete} (dla większości których znalezienie rozwiązań optymalnych wykracza jeszcze poza możliwości dzisiejszych solverów zupełnych), ale potrzebuje na to trochę więcej czasu.
+
+\section{Algorytmy local search dla UWrMaxSAT-a}
+\paragraph{Krok 4}
+Wiele solverów wykorzystuje \textit{local search} do znalezienia szybko pierwszego rozwiązania. Spróbujemy!
+
+Moja pierwsza implementacja solvera \textit{DistUP} z 2015 na testach z 2021 roku dała wynik $0.18$ przy uruchomieniu na $60s$. Dzięki kilku usprawnieniom kodu poprawiłam ten wynik do $0.305$, główną modyfikacją był sposób przeszukiwania zbioru klauzul lub zmiennych w kolejnych krokach, kiedy interesuje nas tylko podzbiór obiektów:
+
+Wykorzystałam wiele pomocniczych tablic, po jednej dla każdego kroku algorytmu, w których trzymałam indeksy zmiennych lub klauzul spełniających daną własność (np. zmienne z $hscore > 0$). \\ 
+Dodawanie i usuwanie elementów z tych tablic działa w czasie stałym, tak samo wybranie losowego obiektu z tablicy. Jedynie znajdowanie zmiennej o największym $sscore$ wymaga przejścia całej tablicy zmiennych, ale i tak zazwyczaj są w niej tylko określone zmienne ze zbioru, a nie wszystkie.
+
+Ostatecznie mój wynik dla \textit{DistUP} to $0.316, 101/151$, natomiast uruchomiony oryginalny solver otrzymał wynik $0.419, 99/151$ przy $60s$ działania. Czyli moja implementacja daje o $30\%$ gorszy wynik niż oryginalna i nie udało mi się jej już bardziej poprawić, ale i tak z obu wyników można wywnioskować, że sam \textit{DistUP} działa gorzej niż oryginalny UWrMaxSAT, ale spróbuję jeszcze je połączyć. 
+Natomiast dla $300s$ wynik oryginalnego solvera to $0.428$, a~mojego $0.310$.
+Podobne wyniki programów dla czasów $60s$ i~$300s$ sugerują, że ten \textit{local search} wyczerpuje wyszukiwanie dosyć szybko i dodatkowy czas nie polepsza rozwiązań. Gorszy wynik $300s$ dla mojego solvera pojawia się, ponieważ program jest porównywany z~najlepszymi znalezionymi rozwiązaniami przez inne solvery w czasie $300s$ a nie $60s$ i jest między nimi różnica większa niż w~działaniu tego programu. 
+
+\textit{DistUP} zaczyna od losowego wartościowania wspartego przez \textit{unit-propagation}. Zamiast tego wykorzystam pierwszy znaleziony \textit{SAT-based} model poprzez uruchomienie SAT solvera na klauzulach \textit{hard}. To połączenie daje wynik $0.373$ i $0.383$ odpowiednio przy działaniu $60s$ i $300s$, co pokazuje, że wykorzystanie metod \textit{local-search} i \textit{SAT-based} razem rzeczywiście przynosi dobre rezultaty.
+
+Połączenie powyższego połączenia \textit{Dist i SAT-based} razem z UWrMaxSAT też okazało się skuteczne. Uruchomienie \textit{Dist i SAT-based} na $30s$, a potem UWrMaxSAT-a przez kolejne $30s$ dało wynik $0.508$! To jest pierwsze polepszenie najlepszego wyniku samego UWrMaxSAT-a!
+
+Dla $300s$ (z czego $60s$ dla \textit{Dist i SAT-based}) algorytm otrzymał wynik $0.557$, który też minimalnie poprawia najlepszy dotychczasowy wynik. 
+
+\paragraph{Krok 5} Kolejny solver do przetestowania to \textit{CCEHC} z 2015 roku. Oryginalny program korzysta z różnych parametrów dla testów spreparowanych (\textit{crafted}) i przemysłowych (\textit{industrial}), ale od 2016 roku konkurs \textit{MaxSAT Evaluation} nie rozróżnia już testów w ten sposób. 
+
+Sprawdziłam działanie programu na obu zestawach parametrów i lepszy okazał się ten dla testów spreparowanych. Wyniki solvera na testach z 2021 roku to $0.331$ i~$0.372$ odpowiednio uruchomione przez $60s$ i $300s$ (\ref{eksperymenty}: 5). 
+
+Mimo że solver wygrał w 2017 roku, to na testach z 2021 roku ten rezultat jest gorszy niż działanie programu \textit{DistUP}, dlatego zdecydowałam nie implementować już tego \textit{local-search} do połączenia z UWrMaxSAT-em.
+Ten algorytm ma też dużo niższą liczbę testów ze znalezionym rozwiązaniem ($74/151$ i $83/151$), podczas gdy \textit{DistUP} rozwiązywał ponad $100$ testów.
+
+\paragraph{Krok 6} Solver SATLike połączony z solverem \textit{SAT-based} jest już solverem hybrydowym, ale jego bazowa wersja (\textit{SATLike 3.0}) to \textit{local-search} i od niej zacznę.
+
+Oryginalny program \textit{SATLike 3.0} uruchomiony na zestawie testów z 2021 roku otrzymał wyniki $0.610$ i $0.644$ (\ref{eksperymenty}: 6b). 
+Moja implementacja tego solvera była stopniowa i~zaczęła się od wersji \textit{SATLike 1.0}, gdzie program startuje od losowego wartościowania i przeprowadza \textit{local-search} z dynamicznym ustalaniem wag klauzul. Pierwszy program, mimo wielu drobnych usprawnień, dawał wyniki między $0.20-0.23$ dla $60s$ i $300s$. Solver działał porównywalnie szybko i zwracał poprawne wyniki, ale znacznie gorsze. Zdecydowałam porównać krok po kroku moją implementację i oryginalną. Okazało się, że solver oryginalny:
+\begin{itemize}
+	\item uruchamia algorytm od nowa po $10^7$ krokach od momentu, kiedy po raz ostatni uda mu się poprawić wynik w tej instancji,
+	\item z prawdopodobieństwem $1\%$ wybiera losową zmienną poprawiającą wynik zamiast najlepszej z $15$ próbek (BMS - linia 6 w pseudokodzie), a kiedy ma do wyboru mniej niż $15$ zmiennych, bierze najlepszą ze wszystkich,
+	\item z prawdopodobieństwem $10\%$ po zmianie wag klauzul wybiera losową zmienną z wybranej klauzuli, a nie tę o największym \textit{score},
+	\item dla instancji o liczbie zmiennych $2000$ ma znacznie mniejsze \textit{smoothing probability}.
+\end{itemize}
+	
+Poza tym algorytmy w obu programach nie różniły się już działaniem. Bardzo podobne było też wykorzystanie podlist zmiennych lub klauzul potrzebnych w~różnych krokach algorytmu - np. klauzule spełnione.
+Jedynie oryginalny solver aktualizuje listę zmiennych ze $score < 0$ liniowo przechodząc całą po każdej zmianie modelu, a ja liniowo względem liczby elementów dodanych i usuniętych w danej iteracji.
+
+Poprawiając powyższe różniące się parametry w moim kodzie dostałam wyniki $0.457$ i $0.473$ (\ref{eksperymenty}: 6c).
+
+Kod oryginalny, który porównywałam to \textit{SATLike 3.0}, wyłączyłam w nim poprawki z wersji $2.0$ i $3.0$ i taki \textit{SATLike 1.0} miał wyniki $0.469$ i $0.493$ (\ref{eksperymenty}: 6a), czyli udało odtworzyć się oryginalne wyniki.
+
+\paragraph{Krok 7} \textit{SATLike 2.0} to ulepszenie, w którym początkowo wszystkie zmienne są wartościowane według algorytmu zachłannego bazującego na \textit{unit-propagation}. Tak~długo, jak istnieje jakaś klauzula \textit{hard}, która ma niezwartościowany jeden element, a pozostałe nie spełniają jej, wartościujemy ten ostatni element, aby spełnić tę klauzulę. Chyba że równocześnie istnieje inna klauzula \textit{hard}, która potrzebuje dokładnie przeciwnego wartościowania tej zmiennej, aby była spełniona - wtedy losowo wartościujemy tę zmienną. Następnie sprawdzamy, czy istnieje analogiczna klauzula \textit{soft}~i przeprowadzamy analogiczne postępowanie. Jeśli nie możemy wykonać powyższego kroku \textit{unit-propagation} na żadnej klauzuli, losowo wartościujemy dowolną niezwartościowaną zmienną i ponownie sprawdzamy wszystkie kolejne opcje.
+
+Moja implementacja programu \textit{SATLike 2.0} poprawiła wynik względem \textit{SATLike 1.0} odpowiednio o $0.034$ i $0.054$ (\ref{eksperymenty}: 7).
+
+\paragraph{Krok 8} 
+\textit{SATLike 3.0} składa się z dwóch modyfikacji. Pierwsza z nich to wstępne uruchomienie, w którym wagi klauzul \textit{soft} są ustawione na $0$, aby znaleźć szybko pierwsze rozwiązanie spełniające klauzule \textit{hard}. Jest to podobne do wstępnego wywołania solvera SAT tylko na klauzulach \textit{hard} w solverach \textit{SAT-based}. Druga zmiana to nadanie wartości \textit{soft\_make} zmiennym względem sumy wag klauzul, które zostaną spełnione, gdy dana zmienna zostanie odpowiednio zwartościowana. Tę własność zmiennych wykorzystuje się przy wyborze zmiennych w algorytmie decymacji i działa podobnie jak w algorytmie \textit{Dist}.  
+
+Oryginalny \textit{SATLike 3.0} otrzymał wyniki $0.610$ i $0.644$ (\ref{eksperymenty}: 6b). Zaskakująco ten dobry wynik dla $60s$ nie jest mocno poprawiony przy $300s$, dlatego SATLike wydaje się dobrym algorytmem wstępnym dla innego algorytmu.
+
+Moja implementacja zdecydowanie poprawiła wynik względem \textit{SATLike 2.0}, ale nie odtworzyła go w pełni - $0.547$ i $0.613$ (\ref{eksperymenty}: 8). Korzystałam z zamieszczonego w~pracy opisu zmian, pseudokodu oraz pełnego kodu oryginalnego. Znalazłam w~nim optymalizację, która w przypadku zmiany wag klauzul i wyboru niespełnionej jeszcze klauzuli \textit{soft} wybiera losową ze zbioru tych, które najmniejszą liczbę razy były wybrane w ten sposób. Ta i poprzednie optymalizacje z kodu znacząco wpłynęły na~wyniki moich implementacji.
+
+\section{Algorytmy hybrydowe dla UWrMaxSAT-a}
+\paragraph{Krok 9}
+SATLike działa szybko, dlatego jest wykorzystywany w wielu solverach jako \textit{preprocessing}. Zacznijmy od niego jako pierwszego algorytmu \textit{local-search} połączonego z UWrMaxSAT-em. Z kilku różnych wariantów najlepiej działały te, w~których SATLike dostał odpowiednio $30s$ i $60s$ czasu działania. Następnie UWrMaxSAT przejmował ostatnie znalezione rozwiązanie jako górne ograniczenie i działał według swojego algorytmu. Ten program dostał wyniki $0.563$ i $0.595$ (\ref{eksperymenty2}: 9a), a więc w kategorii $60s$ minimalnie pobił mój dotychczasowy rekord! Nie rozumiem, dlaczego to połączeniem nie przyniosło jeszcze lepszych rezultatów, ponieważ znacząco zwiększyło liczbę rozwiązanych instancji - w $20$ testach, w których SATLike nie znalazł rozwiązania, udało się to \textit{UWRMaxSAT-owi} w pozostałe $30s$.
+
+Zdecydowałam połączyć te dwa programy w jeszcze jeden sposób - uruchomiłam oddzielnie gotowy oryginalny \textit{SATLike 3.0} na $30s$ oraz UWrMaxSAT na $30s$ i~połączyłam ich wyniki, tzn. dla każdego testu wybierałam lepszy z dwóch otrzymanych wyników. W ten sposób dostałam rekordowy wynik $0.649$ dla łącznie $60s$ (\ref{eksperymenty2}: 9b), który polepszył indywidualne działania obu solverów. Takie równoległe połączenie nie tworzy nowego solvera, ale pokazuje jak różne podejścia rozwiązują inne podzestawy testów i się uzupełniają.
+
+\paragraph{Krok 10} Solver \textit{maxroster} to gotowy algorytm hybrydowy - jest połączeniem \textit{local-search} z solverem \textit{SAT-based}, ale korzysta z pierwszego tylko przez $6s$. Sam solver daje wyniki minimalnie gorsze od SATLike - $0.600$ i $0.613$ (\ref{eksperymenty2}: 10a), ale połączenie go z UWrMaxSAT-em może przynieść zupełnie inny wynik, ponieważ może lepiej sobie radzić z innym podzbiorem testów niż SATLike.
+
+Podobnie jak z oryginalnym SATLike uruchomiłam \textit{maxroster} oddzielnie na~$10s$ i~$30s$ i połączyłam jego wyniki z UWrMaxSAT-em działającym odpowiednio $50s$ i~$30s$. Otrzymałam wyniki $0.556$ i $0.602$ (\ref{eksperymenty2}: 10bc), z czego w drugim przypadku dodanie UWrMaxSAT-a rozwiązało jeden dodatkowy test. SATLike wciąż jest najlepszy.
+
+\paragraph{Krok 11} Kolejny analizowany przeze mnie solver to \textit{Open-WBO-Inc}, ale nie będę go łączyć z UWrMaxSAT-em, ponieważ bazują na tych samych składowych: oba solvery opierają się na strategii \textit{OLL} i ostatecznie szukają rozwiązań optymalnych problemu. Aproksymacje \textit{Open-WBO-Inc} to klasteryzacja lub podział problemu na~podproblemy, obie są pewną formą stratyfikacji, którą również UWrMaxSAT ma~zaimplementowaną i dobrze działającą.
+
+\paragraph{Krok 12}
+Następny jest \textit{LinSPBS} z $2018$ roku, który wprowadza \textit{polarity selection}. 
+Polega to na preferowaniu wartościowania zmiennych w taki sposób, jak było to~ustawione w ostatnim najlepszym rozwiązaniu. UWrMaxSAT również korzysta z~tej techniki dla zmiennych relaksacyjnych w przeszukiwaniu liniowym. Jest to możliwe dzięki wbudowanemu mechanizmowi wykorzystywanych SAT solverów.
+
+W domyślnym trybie UWrMaxSAT ustanawia preferencję wartościowania zmiennych relaksacyjnych w taki sposób, aby formuła była niezrelaksowana. W ten sposób algorytm preferuje spełnianie klauzul przy pomocy pozostałych zmiennych. Do~tej zasady dołożyłam drugą, tę z \textit{LinSPBS}, która ustanawia preferencję zmiennych wejściowych za każdym razem, gdy zostanie znalezione nowe lepsze rozwiązanie. Ta~zmiana pogorszyła działanie samego UWrMaxSAT-a z $0.469$ na $0.457$.
+
+Przy okazji sprawdziłam zachowanie programu bez domyślnego wartościowania zmiennych relaksacyjnych - $0.409$ - czyli zdecydowanie obniżyło to wynik.
+
+\paragraph{Krok 13}
+\textit{Loandra} dokłada mocno rozbudowany \textit{preprocessor MaxPre} i też go zastosuję przy uruchomieniu UWrMaxSAT-a. W szczególności autorzy pracy zaznaczają, że przy problemie \textit{MaxSAT} należy wyłączyć jedną z domyślnych metod - \textit{blocked clause elimination}, ponieważ modyfikuje ona klauzule w sposób, który utrudnia następne przeszukiwanie liniowe lub \textit{core-guided}. UWrMaxSAT ma już zaimplementowaną opcję korzystania z tego preprocessora, ja tylko przetestuję zaproponowany zestaw metod. 
+
+Usuwając metodę \textit{bce} uruchomiłam UWrMaxSAT z ustawioną flagą \textit{-maxpre = "[uvsrgc]"}, która oznacza, że po kolei działają \textit{unit-propagation}, kilka różnych zasad eliminacji i rezolucji \cite{maxpre} tak długo, jak coś udaje się uprościć.
+
+Dodanie \texttt{maxpre} poprawiło wyniki samego UWrMaxSAT-a do $0.518$ i $0.579$
+(\ref{eksperymenty2}: 13a). 
+Sprawdziłam ponownie połączenie hybrydowe SATLike i \textit{maxroster} z takim UWrMaxSAT-em i dostałam rekordowe wyniki dla $60s$: odp. $0.650$ i $0.674$ (\ref{eksperymenty2}: 13bc). SATLike z UWrMaxSAT-em działającym $300s$ poprawił wynik do $0.694$.
+
+Poza tym Loandra łączy trzy różne metody rozwiązywania problemu ze sobą - preprocessing, przeszukiwanie \textit{core-guided} oraz liniowe i przekazuje dotychczas znalezione rozwiązania, ograniczenia, informacje między kolejnymi etapami. Jednak UWrMaxSAT też potrafi zrobić dokładnie te trzy kroki - \textit{maxpre}, przeszukiwanie \textit{core-gudied}, a następnie przejść na binarne przeszukiwanie \textit{sat-unsat}.
+
+\paragraph{Krok 14}
+Ostatni omawiany przeze mnie solver to \textit{TT-Open-WBO}.
+Oryginalny \textit{TT-Open-WBO} ma niesamowity wynik $0.800$ na $60s$. Moja implementacja algorytmu \textit{Polosat} poprzedzona $15s$ działania mojego SATLike i uwzględniająca \textit{TORC polarity selection} otrzymała wynik $0.398$. Odtworzenie oryginalnego wyniku wymagałoby uwzględnienia dodatkowo:
+\begin{itemize}
+	\item podziału klauzul na klastry według \textit{Open-WBO-Inc-BMO}, na którym solver bazuje - moja implementacja jest włączona w działanie UWrMaxSAT-a i nie korzysta z \textit{Open-WBO};
+	\item obliczania \textit{MPS - Models Per Second}, które wyznacza, jak szybko algorytm \textit{Polosat} przetwarza dane, jeśli w tempie wolniejszym niż $1 MPS$, to algorytm przechodzi do zapytań dla bazowego \textit{Open-WBO};
+	\item oryginalnego solvera SATLike;
+	\item dokładnej analizy całego kodu solvera.
+\end{itemize}
+
+Najpierw sprawdziłam jednak, jak działa połączenie oryginalnego \textit{TT-Open-WBO} razem z UWrMaxSAT-em. $30s$ działania \textit{TT-Open-WBO} (w tym $15s$ SATLike) i $30s$ działania UWrMaxSAT-a daje wynik $0.756$, więc takie połączenie nie poprawia działania obu algorytmów.
+
+Zastanawiałam się, czy mogłabym wykorzystać któryś fragment tego solvera do połączenia z UWrMaxSAT-em - np. sam algorytm \textit{Polosat}, który stara się poprawić działanie otrzymanego rozwiązania. Jednak jego działanie zajmuje dużo czasu i~mimo tego że poprawia rozwiązania, to spowalnia kolejne przeszukiwania UWrMaxSAT-a. Poza tym jest to kolejny algorytm \textit{SAT-based}, a nie \textit{local-search}, który został sprawdzony eksperymentalnie jako dobre połączenie z drugim algorytmem \textit{SAT-based}, dlatego w tym miejscu kończę eksperymenty łączenia solverów z \textit{UWrMaxSAT-em}.
+
+\chapter{Wyniki i wnioski}
+W tej pracy przeanalizowałam algorytmy i podejścia, jakie pojawiały się w~ostatnich latach (do $2021$ roku) dla problemu MaxSAT. To zagadnienie jest ciągle rozwijane, ponieważ jest interesujące naukowo i biznesowo. 
+Moja analiza pokazała, jak bardzo kolejne programy zależą od poprzednich, pomysły są rozbudowywane i~ulepszane przez konkurujące ze sobą zespoły, a efekty połączenia różnych podejść przynoszą podwójne korzyści. Konkurs \textit{MaxSAT Evaluation} znacząco ułatwia taką współpracę, dzielenie się najnowszymi rozwiązaniami oraz porównywanie ich ze sobą.
+
+Implementacja opisanych w konkursie solverów okazała się trudniejsza niż sądziłam, ale i tak pozwoliła mi dużo lepiej zrozumieć przedstawione algorytmy.
+Zaproponowane przeze mnie nowe połączenie \textit{SATLike-a} z~\textit{UWrMaxSAT-em} może być ciągle znacznie ulepszone, ale już teraz jest efektywnym nowym solverem niezupełnym.
+
+Poniżej podsumowuję efekty różnych eksperymentów, napotkane trudności z~łączeniem algorytmów i możliwe przyszłe usprawnienia. 
+\section{Podsumowanie eksperymentów}
+Starałam się połączyć UWrMaxSAT-a z różnymi metodami, algorytmami i solverami, które były wykorzystywane przez ostatnie kilka lat w konkursie w kategorii \textit{incomplete}. Poniżej przedstawiam wizualne wyniki tych eksperymentów.
+
+Jako najlepsze połączenie wybrałam solver hybrydowy, w którym moja implementacja SATLike działa przez pierwsze $30-60s$, a następnie UWrMaxSAT wykonuje swój algorytm. Po końcowym wybraniu go i przeanalizowaniu całego kodu jeszcze raz, solver dał mi ostateczne wyniki $0.616$ oraz $0.643$ i~został dodatkowo opisany w kolejnym podrozdziale.
+
+\begin{figure}[h]
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{mojewyniki60s}
+\end{center}
+\caption{Wyniki moich eksperymentów na 60s}
+\end{figure}
+\subsection{Połączenia z UWrMaxSAT-em}
+Nie udało mi się połączyć dowolnego algorytmu z UWrMaxSAT-em w taki sposób, aby w swoim przeszukiwaniu korzystał on ze znalezionego wcześniej rozwiązania. Wynika to z tego, że algorytm \textit{core-guided} bazuje na zbiorze założeń z poprzednich przeszukiwań, które są pewne, zapewniają, że dane ograniczenia lub wartościowania zmiennych na pewno muszą obowiązywać w~końcowym rozwiązaniu.
+Dlatego łączyłam różne algorytmy ze sobą, przekazywałam górne ograniczenie rozwiązania, ale nie była to baza do kolejnych przeszukiwań. Dzięki łączeniu UWrMaxSAT nie uruchamiał też pierwszego zapytania do SAT solvera, jeśli któryś uruchomiony \textit{local-search} przed nim znalazł już jakieś rozwiązanie. I wykonanywane było tylko jedno wczytywanie danych wejściowych i budowanie tablic pomocniczych.
+
+Nie mogłam też korzystać z \textit{MaxPre} dla UWrMaxSAT-a, jeśli łączyłam 2 algorytmy - ten \textit{preprocessing} przekształca klauzule wejściowe i na końcu mapuje z~powrotem rozwiązanie. Dodanie \textit{MaxPre} również do algorytmu \textit{local-search} mogłoby być nowym usprawnieniem, ale zabrałoby mu bardzo dużo początkowego czasu, który jest ważny do znalezienia szybko pierwszego dowolnego rozwiązania.
+
+Innym sposobem optymalizacyjnym mogłoby być lokalne poprawianie znalezionych już przez UWrMaxSAT rozwiązań, jednak sprawdzone przeze mnie metody nie poprawiły wyników programu - mimo lokalnego poprawiania rozwiązań, spowalniały kolejne iteracje UWrMaxSAT-a, dla którego czas był ważny. 
+
+Wkorzystałam dotychczasową mocno rozbudowaną implementację UWrMaxSAT - sprawdziłam jego działanie z różnymi SAT solverami, z różnymi trybami metod przeszukiwania rozwiązania, modyfikowałam polaryzację i korzystałam ze zintegrowanego preprocessora. Te eksperymenty pozwalają zdecydować o najlepszych parametrach solvera do działania w trybie \textit{incomplete}.
+
+\subsection{Połączenia równoległe}
+Najwyższe wyniki w trakcie eksperymentów osiągnęłam uruchamiając równolegle UWrMaxSAT-a oraz inny solver (\textit{maxroster} lub SATLike). Te wyniki są troszkę wyższe od wybranego przeze mnie solvera hybrydowego - $0.664$ oraz $0.694$, ale nie mogłyby być wykorzystane jako gotowy solver (są to uruchomienia oddzielnych plików binarnych) i w żadem sposób nie współpracują ze sobą. Ale pokazują, że UWrMaxSAT potrafi znacząco poprawić inne oryginalne solvery dzięki przeszukiwaniu, które okazuje się skuteczne na innych testach niż one. 
+
+Mając wyniki tych testów - gdzie dla każdego testu widzę koszt rozwiązania dla 3~solverów - zauważyłam, że średni wynik zbioru testowego nie jest jednoznacznym kryterium do porównywania algorytmów. Testy są podzielone na podgrupy i widać zdecydowanego zwycięzce w większości podgrup testowych, a więc średni wynik zależy też od liczby testów z różnych grup.
+
+\begin{figure}[h]
+	\includegraphics[width=0.8\textwidth]{wyniki30s}
+	\caption{Fragment wyników uruchomień 3 solverów na 30s}
+\end{figure}
+
+\subsection{Odtwarzanie algorytmów}
+Odtwarzanie solverów okazało się dużym wyzwaniem - programy są złożone i~rozbudowywane przez kolejne edycje konkursu, często bazują na innych solverach. Dogłębna analiza programu \textit{SATLike 3.0} pozwoliła mi zauważyć różne stochastyczne metody wykorzystywane przy \textit{local-search}, aby ograniczać utknięcia w lokalnych minimów.
+
+Moja implementacja algorytmów \textit{DistUP} oraz \textit{SATLike 3.0} okazała się ostatecznie efektywna.
+Brakowało mi dokładniejszego opisu solvera \textit{TT-Open-WBO-Inc} do lepszej implementacji. Autor solvera opisuje stosowane heurystyki w różnych pracach naukowych, ale trudno było mi z nich wywnioskować i zrozumieć ostateczne decyzje podjęte przy solverze.
+
+Podczas tego projektu przeanalizowałam wiele solverów i algorytmów z ostatnich lat. Zdecydowanie wygrywającą ostatnio metodą jest połączenie algorytmu stochastycznego \textit{local-search} z przeszukiwaniem \textit{SAT-based}. Te ostatnie edycje konkursu pokazały ogromny postęp i wiele ciekawych optymalizacji dla problemu \textit{MaxSAT}.
+
+\section{UWrMaxSAT jako solver niezupełny}
+SATLike to stochastyczny algorytm \textit{local-search} wykorzystywany jako \textit{preprocessing} w kilku ostatnich najlepszych solverach. Okazało się, że razem z UWrMaxSAT-em też bardzo dobrze sobie radzi i w połączeniu poprawia rezultaty obu pojedynczych solverów.
+
+W wyniku tej pracy proponuję połączenie SATLike i UWrMaxSAT jako domyślny algorytm dla zapytań \textit{incomplete}. Moje ostatnie uruchomienie tego solvera na testach z $2021$ dało wyniki $0.616$ oraz $0.643$, gdzie SATLike dostawał odpowiednio $30s$ i $60s$ i uruchamiał najpierw przeszukiwanie tylko na klauzulach \textit{hard} i jeśli znalazł jakieś, to na wszystich klauzulach. Następnie, jeśli żadne rozwiązanie nie zostało znalezione, UWrMaxSAT wykonuje zapytanie tylko o klauzule \textit{hard} do SAT solvera \textit{Glucose 4.1}. W końcu UWrMaxSAT uruchamia swój domyślny algorytm \textit{core-guided}.
+
+Uruchomienie tego solvera wymaga dołożenia flagi \texttt{-satlike=<time>}, gdzie \texttt{<time>} to liczba sekund, jaką SATLike dostaje do swojego działania. Dodatkowo można dołożyć działanie algorytmu \textit{DistUP}, które wykona się wtedy jako pierwsze (\texttt{-dist=<time>}). Ostatnia dodana flaga to \texttt{-oh,-only-hards}, która dodaje pierwsze zapytanie do SAT solvera tylko na klauzulach \textit{hard}.
+
+Poniżej przedstawiam przykładową komendę do uruchomienia programu z katalogu z kodem i pozostałymi flagami takimi jakie używane są w konkursie:
+	
+\texttt{make \&\& timeout -k 5 60 ./build/release/bin/uwrmaxsat -cpu-lim=60 -nm -v0 -a -cs -oh -dist=0 -satlike=30 ../tests/wg2.wcnf} 
+
+z założeniem, że pliki testowe są  obok folderu z kodem, flagi \texttt{-nm,-bm} oznaczają 
+odpowiednio czy ma zostać wyświetlone końcowe rozwiązanie w formacie binarnym lub wcale.
+W dodatku \ref{testing} opisuję dokładnie, jak można przetestować moje rozwiązanie na pojedynczych testach lub zestawie z $2021$ roku.
+
+W ten sposób solver \textit{UWrMaxSAT} może być wykorzystany zarówno jako efektywny solver zupełny, jak i niezupełny dla problemu MaxSAT.
+
+\appendix
+\chapter{Pełne wyniki uruchomień}
+\begin{table}[h]
+	\centering
+	\begin{tabular}{|r|c|p{1.1cm}|p{1.5cm}|p{1cm}|p{1.1cm}|p{1.5cm}|p{1cm}|}
+		\hline
+	 & & \multicolumn{3}{|c|}{60s} & \multicolumn{3}{|c|}{300s} \\
+		\hline
+		\textbf{nr} & \textbf{opis} & \textbf{wynik} & \textbf{\#rozw.} & \textbf{top} & \textbf{wynik} & \textbf{\#rozw.} & \textbf{top} \\
+		\hline
+		1 & oryg. UWrMaxSAT (U) & 0.265 & 50 & 10 & - & - & -\\
+		\hline
+		2a & 1 uruch. SAT (1SAT) & 0.344 & 116 & 0 & - & - & - \\
+		\hline
+		2b & 1SAT+U & 0.348 & 116 & 0 & - & - & - \\
+		\hline
+		3a & U z Glucose & 0.450 & 108 & 3 & 0.543 & 149 & 3 \\
+		\hline
+		3b & 1SAT+U z Glucose & 0.467 & 130 & 0 & 0.543 & 149 & 3 \\
+		\hline
+		4a & distUp & 0.316 & 101 & 3 & 0.310 & 102 & 1 \\
+		\hline
+		4b & oryg. distUp & 0.419 & 99 & 12 & 0.423 & 102 & 12 \\
+		\hline		
+		4c & 1SAT+dist & 0.373 & 119 & 3 & 0.383 & 124 & 3 \\
+		\hline
+		4d & 1SAT+dist+U & 0.508 & 128 & 14 & 0.557 & 143 & 12 \\
+		\hline
+		5 & oryg. CCEHC & 0.331 & 74 & 13 & 0.372 & 83 & 14 \\
+		\hline
+		6a & oryg. SATLike 1.0 & 0.468 & 89 & 20 & 0.495 & 95 & 22 \\
+		\hline		
+		6b & oryg. SATLike 3.0 & 0.610 & 118 & 26 & 0.644 & 124 & 25 \\
+		\hline
+		6c & SATLike 1.0 & 0.457 & 100 & 14 & 0.473 & 106 & 15 \\
+		\hline
+		7 & SATLike 2.0 & 0.491 & 106 & 17 & 0.527 & 113 & 21 \\
+		\hline		
+		8 & SATLike 3.0 & 0.547 & 118 & 26 & 0.613 & 124 & 25 \\
+		\hline		
+	\end{tabular} \\
+	
+	\label{eksperymenty}
+	\caption{Wyniki uruchomień UWrMaxSAT-a i pierwszych testowanych algorytmów, \textbf{\#~rozw.}~to liczba testów, dla których zostało znalezione jakieś rozwiązanie, \textbf{top}~to~liczba testów, które otrzymały takie samo rozwiązanie (lub lepsze) jak najlepsze rozwiązanie z konkursu w 2021 roku.}
+\end{table}
+\begin{table}[h]
+	\centering
+	\begin{tabular}{|r|c|p{1.1cm}|p{1.5cm}|p{1cm}|p{1.1cm}|p{1.5cm}|p{1cm}|}
+		\hline
+		& & \multicolumn{3}{|c|}{60s} & \multicolumn{3}{|c|}{300s} \\
+		\hline
+		\textbf{nr} & \textbf{opis} & \textbf{wynik} & \textbf{\#rozw.} & \textbf{top} & \textbf{wynik} & \textbf{\#rozw.} & \textbf{top} \\
+		\hline
+		9a & SATLike 3.0+U & 0.563 & 132 & 9 & 0.595 & 138 & 16 \\
+		\hline		
+		9b & oryg. SATLike 3.0+U & 0.649 & 133 & - & 0.680 & 140 & - \\
+		\hline		
+		10a & maxroster & 0.601 & 141 & 19 & 0.644 & 148 & 24 \\
+		\hline		
+		10b & maxroster 10s + U & 0.556 & - & - & - & - & - \\
+		\hline		
+		10c & maxroster 30s + U & 0.601 & 137 & - & 0.589 & 143 & - \\
+		\hline		
+		13a & maxpre + U & 0.518 & 125 & 38 & 0.579 & 145 & 40 \\
+		\hline
+		13b & oryg. SATLike 30s + (maxpre+U) & 0.650 & 131 & - & 0.694 & 145 & - \\
+		\hline
+		13c & maxroster 30s + (maxpre+U) & 0.664 & 137 & - & 0.676 & 146 & - \\
+		\hline
+		14a & oryg. TT-Open-WBO (TT) & 0.800 & 139 & 48 & - & - & - \\
+		\hline
+		14b & TT & 0.398 & 134 & 1 & - & - & - \\
+		\hline
+		14c & oryg. TT + (maxpre+U) & 0.756 & 135 & - & - & - & - \\
+		\hline
+	\end{tabular} \\
+	\label{eksperymenty2}
+	\caption{Wyniki uruchomień UWrMaxSAT-a i algorytmów hybrydowych, \textbf{\#~rozw.}~to liczba testów, dla których zostało znalezione jakieś rozwiązanie, \textbf{top}~to~liczba testów, które otrzymały takie samo rozwiązanie (lub lepsze) jak najlepsze rozwiązanie z konkursu w 2021 roku.}
+\end{table}
+
+\chapter{Uruchamianie testów} \label{testing}
+Razem z pracą załączam katalog \texttt{uwrmaxsat-inc} z kodem UWrMaxSAT-a, w~którym są dodane moje algorytmy (w plikach \texttt{MsSolver.cc} i \texttt{MsSolver.h}). W~folderze \texttt{test} jest $10$ losowo wybranych testów z \textit{MaxSAT Evaluation 2021}. Aby uruchomić dowolny test na $60s$ należy uruchomić skrypt \texttt{run\_test60.sh -n <nazwa testu>}.
+Przy pomocy pozostałych flag można zmienić czas działania testu, dodać czas dla \textit{Dist} oraz SATLike. Flaga \texttt{-h} pokazuje te flagi. Ostatni wypisany wiersz zaczynający się od $o$ to koszt minimalnego znalezionego rozwiązania. Na końcu pokazuje się koszt najmniejszego rozwiązania znalezionego przez solvery z konkursu.
+
+W folderze z testami umieściłam też mały test w formacie WCNF z 2021 roku (\texttt{small.wcnf}) - jako przykład, jak można budować nowe testy.
+Aby uruchomić wszystkie testy z katalogu należy wpisać:
+\texttt{for f in tests/*; do echo Run \$f \&\& ./run\_test60.sh \$f; done}.
+W ten sposób dostajemy koszty rozwiązań dla~poszczególnych testów.
+
+Aby porównać działanie różnych solverów uruchamiałam cały zestaw testów i~sprawdzałam średni sumaryczny wynik testów. Dodatkowo sprawdzałam, czy podane rozwiązanie jest poprawne względem kosztu i spełnialności klauzul \textit{hard}. K orzystałam ze skryptów dla UWrMaxSAT-a, które zmodyfikowałam do swoich potrzeb.
+
+Używane przeze mnie skrypty zamieszczam w folderu \texttt{april/scripts}. Aby uruchomić cały zestaw testów należy:
+
+\begin{enumerate}
+	\item Włączyć co najmniej kilka komputerów z sali $137$.
+	\item Zalogować się na dowolny komputer $K$ w sali $137$ i skopiować tam folder \texttt{scripts-ms21}.
+	\item Zmodyfikować odpowiednio skrypt \texttt{./remote.sh} z katalogu \texttt{uwrmaxsat-inc} poprzez zmianę loginu do komputerów.
+	\item Zdalnie uruchomić testy z odpowiednimi parametrami, np. \texttt{./remote.sh 60 30} uruchomi wszystkie testy na $60s$, z czego $30s$ będzie działał SATLike. 
+	\item Na komputerze $K$ sprawdzić, czy wszystkie testy już się policzyły (czy liczba plików w katalogu wyjściowym to 302: \texttt{ls outputs/out-60 | wc}); czas działania skryptu jest nieznacznie dłuższy niż samego testu, ponieważ sprawdzana jest też poprawność rozwiązania.
+	\item Na komputerze $K$ z katalogu \texttt{scripts-ms21} uruchomić skrypt \texttt{./scripts/sum.sh 60}, gdzie pierwszy parametr to sumaryczny czas działania testów z kroku 4. \\ - pierwsza wartość ostatniego wiersza wyniku to średni wynik rozwiązania.
+	\item Usunąć wyniki z tego uruchomienia \texttt {rm outputs/out-60/*}.
+\end{enumerate}
+
+Komendy z komputera $K$ mogłyby być wykonywane też przez zdalne połączenie, ale wymagają wykonania w odpowiedniej kolejności i w przypadku niestabilnego internetu lub połączenia ssh jest to trudne. Dlatego przedstawiam opcję, z której korzystałam w trakcie eksperymentów i była dla mnie najbardziej niezawodna - łączyłam się do jednego komputera i na nim wykonywałam pojedyncze komendy w~odpowiedniej kolejności, a zdalnie uruchamiałam cały zestaw testów, które działały równolegle i niezależnie.
+
+\chapter{Pseudokody opisanych algorytmów}
+
+\begin{figure}[h]
+	\caption{Algorytm Dist z 2014 roku \cite{dist}}
+	\label{dist-code}	\includegraphics[width=0.8\textwidth]{dist}
+\end{figure}
+
+\begin{figure}[h]
+	\caption{Algorytm CCEHC z 2015 roku \cite{ccehc}}
+	\label{ccehc-code}
+	\includegraphics[width=1\textwidth]{ccehc}	
+\end{figure}
+
+\begin{figure}[h]
+	\caption{Algorytm SATLike z 2018 roku \cite{satlike}}
+	\label{satlike-code}
+	\includegraphics[width=1\textwidth]{satlike}	
+\end{figure}
+
+\begin{figure}[h]
+	\caption{Algorytm Polosat z 2021 roku \cite{ttopenwbo}}
+	\label{polosat-code}
+	\includegraphics[width=1\textwidth]{polosat}	
+\end{figure}
+
+%%%%% BIBLIOGRAFIA
+\bibliographystyle{unsrt}
+\bibliography{bib}
+
+\end{document}
